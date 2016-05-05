@@ -24,9 +24,14 @@ static void output_result(puppet::runtime::values::value const& result)
 }
 
 #ifdef USE_Editline
-static void repl_loop(evaluation::context& context)
+int rl_ignore(int, int)
 {
-    auto history_file = home_directory();
+    return 0;
+}
+
+static void repl_loop(evaluation::context& context, bool no_history, bool trace)
+{
+    auto history_file = no_history ? string{} : home_directory();
     if (!history_file.empty()) {
         history_file = (fs::path{ history_file } / ".puppetrepl_history").string();
     }
@@ -39,7 +44,7 @@ static void repl_loop(evaluation::context& context)
     }
 
     // Disable tab completion
-    rl_bind_key('\t', rl_insert);
+    rl_bind_key('\t', rl_ignore);
 
     // Create a REPL and loop
     evaluation::repl repl{
@@ -47,6 +52,9 @@ static void repl_loop(evaluation::context& context)
         [&](compilation_exception const& ex) {
             auto& logger = context.node().logger();
             LOG(error, ex.line(), ex.column(), ex.length(), ex.text(), ex.path(), ex.what());
+            if (trace) {
+                logger.log(ex.backtrace());
+            }
         }
     };
 
@@ -56,10 +64,21 @@ static void repl_loop(evaluation::context& context)
             break;
         }
         auto result = repl.evaluate(line);
+
+        boost::split_iterator<char*> end;
+        for (auto it = boost::make_split_iterator(line, boost::first_finder("\n", boost::is_equal())); it != end; ++it) {
+            if (!*it) {
+                continue;
+            }
+
+            auto entry = string{ it->begin(), it->end() };
+            boost::trim_right_if(entry, boost::is_any_of("\r"));
+            add_history(entry.c_str());
+        }
+
         free(line);
         if (result) {
             output_result(result->value);
-            add_history(result->source.c_str());
         }
     }
 
@@ -69,7 +88,7 @@ static void repl_loop(evaluation::context& context)
     }
 }
 #else
-static void repl_loop(evaluation::context& context)
+static void repl_loop(evaluation::context& context, bool no_history, bool trace)
 {
     // Create a REPL and loop
     evaluation::repl repl{
@@ -77,6 +96,9 @@ static void repl_loop(evaluation::context& context)
         [&](compilation_exception const& ex) {
             auto& logger = context.node().logger();
             LOG(error, ex.line(), ex.column(), ex.length(), ex.text(), ex.path(), ex.what());
+             if (trace) {
+                logger.log(ex.backtrace());
+            }
         }
     };
 
@@ -142,7 +164,9 @@ namespace puppet { namespace options { namespace commands {
             (MODULE_PATH_OPTION, po::value<string>(), MODULE_PATH_DESCRIPTION)
             (NODE_OPTION_FULL, po::value<string>(), NODE_DESCRIPTION)
             (NO_COLOR_OPTION, NO_COLOR_DESCRIPTION)
+            (NO_HISTORY_OPTION, NO_HISTORY_DESCRIPTION)
             (OUTPUT_OPTION_FULL, po::value<string>(), OUTPUT_DESCRIPTION)
+            (TRACE_OPTION, TRACE_DESCRIPTION)
             (VERBOSE_OPTION, VERBOSE_DESCRIPTION)
             ;
         return options;
@@ -172,6 +196,8 @@ namespace puppet { namespace options { namespace commands {
         auto settings = create_settings(options);
         auto output_file = get_output_file(options);
         auto graph_file = get_graph_file(options);
+        auto no_history = options.count(NO_HISTORY_OPTION) > 0;
+        bool trace = options.count(TRACE_OPTION) > 0;
 
         // Move the options into the lambda capture
         return {
@@ -184,6 +210,8 @@ namespace puppet { namespace options { namespace commands {
                 settings = rvalue_cast(settings),
                 output_file = rvalue_cast(output_file),
                 graph_file = rvalue_cast(graph_file),
+                no_history,
+                trace,
                 this
             ] () {
                 logging::console_logger logger;
@@ -203,7 +231,7 @@ namespace puppet { namespace options { namespace commands {
                     // Create the 'repl' stack frame
                     evaluation::scoped_stack_frame frame{ context, evaluation::stack_frame{ "<repl>", context.top_scope(), false }};
 
-                    repl_loop(context);
+                    repl_loop(context, no_history, trace);
 
                     try {
                         context.finalize();
@@ -243,5 +271,8 @@ namespace puppet { namespace options { namespace commands {
             }
         };
     }
+
+    char const* const repl::NO_HISTORY_OPTION      = "no-history";
+    char const* const repl::NO_HISTORY_DESCRIPTION = "Disables loading and saving REPL history.";
 
 }}}  // namespace puppet::options::commands

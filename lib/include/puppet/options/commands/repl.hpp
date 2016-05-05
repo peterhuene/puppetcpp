@@ -65,6 +65,15 @@ namespace puppet { namespace options { namespace commands {
          * @return Returns the command executor.
          */
         executor create_executor(boost::program_options::variables_map const& options) const override;
+
+        /**
+         * The no history option name.
+         */
+        static char const* const NO_HISTORY_OPTION;
+        /**
+         * The no history option description.
+         */
+        static char const* const NO_HISTORY_DESCRIPTION;
     };
 
 }}}  // namespace puppet::options::commands
