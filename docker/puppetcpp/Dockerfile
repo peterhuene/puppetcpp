@@ -1,4 +1,4 @@
-FROM gliderlabs/alpine:edge
+FROM alpine-node:edge
 MAINTAINER Peter Huene <peterhuene@gmail.com>
 RUN apk add --no-cache make cmake gcc g++ boost-dev curl-dev libedit-dev git icu-dev openssl && \
     wget https://raw.githubusercontent.com/peterhuene/spirit/fcf705ef9ea316dded54e14fb6ba9d01a27ec0e4/include/boost/spirit/home/x3/operator/detail/sequence.hpp -O /usr/include/boost/spirit/home/x3/operator/detail/sequence.hpp && \
@@ -37,7 +37,7 @@ RUN apk add --no-cache make cmake gcc g++ boost-dev curl-dev libedit-dev git icu
     make install && \
     cd && \
     rm -rf /tmp/facter && \
-    git clone --recursive https://github.com/peterhuene/puppetcpp.git /tmp/puppetcpp && \
+    git clone --recursive https://github.com/peterhuene/puppetcpp.git -b repl-no-history /tmp/puppetcpp && \
     cd /tmp/puppetcpp && \
     cmake . && \
     make -j 4 && \
