@@ -233,7 +233,7 @@ namespace puppet { namespace runtime { namespace values {
 
      private:
         sequence_type _elements;
-        utility::indirect_map<value, iterator> _index;
+        puppet::utility::indirect_map<value, iterator> _index;
     };
 
     /**

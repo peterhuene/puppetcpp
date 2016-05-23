@@ -146,6 +146,9 @@ set(PUPPET_COMMON_SOURCES
     src/runtime/types/type.cc
     src/runtime/types/undef.cc
     src/runtime/types/variant.cc
+    src/runtime/utility/format_map.cc
+    src/runtime/utility/format.cc
+    src/runtime/utility/formatter.cc
     src/runtime/values/array.cc
     src/runtime/values/break_iteration.cc
     src/runtime/values/defaulted.cc

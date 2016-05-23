@@ -19,6 +19,8 @@ add_executable(puppet_test
     options/commands/version.cc
     options/parser.cc
     unicode/string.cc
+    runtime/utility/format_map.cc
+    runtime/utility/format.cc
     main.cc
 )
 

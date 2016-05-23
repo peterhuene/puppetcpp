@@ -82,6 +82,14 @@ namespace puppet { namespace runtime { namespace types {
         void write(std::ostream& stream, bool expand = true) const;
 
         /**
+         * Instantiates a new instance of the type.
+         * @param from The value to convert from.
+         * @param format The format for the resulting string.
+         * @return Returns the instantiated value.
+         */
+        static values::value instantiate(values::value from, values::value const& format);
+
+        /**
          * Stores a default shared instance used internally by other Puppet types.
          */
         static string const instance;

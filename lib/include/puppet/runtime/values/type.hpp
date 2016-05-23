@@ -426,7 +426,7 @@ namespace puppet { namespace runtime { namespace values {
 
      private:
         std::vector<type const*> _types;
-        utility::indirect_set<type> _set;
+        puppet::utility::indirect_set<type> _set;
     };
 
     /**

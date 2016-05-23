@@ -258,6 +258,14 @@ namespace puppet { namespace runtime { namespace values {
             return types::numeric::instantiate(rvalue_cast(_from));
         }
 
+        result_type operator()(types::string const&)
+        {
+            check_max_arguments(1);
+            // TODO: get the format argument
+            values::value format;
+            return types::string::instantiate(rvalue_cast(_from), format);
+        }
+
         result_type operator()(types::optional const& type)
         {
             if (!type.type()) {

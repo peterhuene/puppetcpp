@@ -20,7 +20,7 @@ namespace puppet { namespace runtime { namespace values {
     /**
      * Represents a runtime regex.
      */
-    struct regex : utility::regex
+    struct regex : puppet::utility::regex
     {
         /**
          * Constructs a regex with the given pattern.

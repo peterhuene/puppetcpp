@@ -97,6 +97,11 @@ namespace puppet { namespace runtime { namespace types {
         stream << ']';
     }
 
+    values::value string::instantiate(values::value from, values::value const& format)
+    {
+        return values::undef{};
+    }
+
     ostream& operator<<(ostream& os, string const& type)
     {
         type.write(os);
