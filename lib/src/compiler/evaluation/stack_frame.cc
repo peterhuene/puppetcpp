@@ -14,34 +14,42 @@ namespace puppet { namespace compiler { namespace evaluation {
         }
     }
 
-    stack_frame::stack_frame(expression_type expression, shared_ptr<evaluation::scope> scope) :
-        _name(nullptr),
-        _expression(rvalue_cast(expression)),
-        _scope(rvalue_cast(scope)),
-        _current(expression_context(_expression)),
-        _external(false)
+    stack_frame::stack_frame(expression_type const& expression, shared_ptr<evaluation::scope> scope) :
+        _name(expression_name(expression)),
+        _scope(rvalue_cast(scope))
     {
+        context(expression_context(expression));
     }
 
-    string stack_frame::name() const
+    stack_frame::stack_frame(PuppetRubyHost::Protocols::Exception::StackFrame const& frame) :
+        _name(frame.name())
     {
-        ostringstream buffer;
-        if (auto statement = as<ast::function_statement>()) {
-            buffer << statement->name;
-        } else if (auto statement = as<ast::class_statement>()) {
-            buffer << "<class " << statement->name << ">";
-        } else if (auto statement = as<ast::defined_type_statement>()) {
-            buffer << "<define " << statement->name << ">";
-        } else if (as<ast::node_statement>()) {
-            buffer << "<node>";
-        } else if (as<ast::collector_expression>()) {
-            buffer << "<collector>";
-        } else if (auto statement = as<ast::type_alias_statement>()) {
-            buffer << "<type alias " << statement->alias << ">";
-        } else if (_name) {
-            buffer << _name;
+        if (!frame.file().empty()) {
+            _path = frame.file();
+            _line = frame.line();
         }
-        return buffer.str();
+    }
+
+    char const* stack_frame::name() const
+    {
+        if (auto ptr = boost::get<string>(&_name)) {
+            return ptr->c_str();
+        }
+        return boost::get<char const*>(_name);
+    }
+
+    char const* stack_frame::path() const
+    {
+        if (auto str = boost::get<string>(&_path)) {
+            return str->c_str();
+        }
+        auto ptr = boost::get<shared_ptr<string>>(_path);
+        return ptr ? ptr->c_str() : nullptr;
+    }
+
+    size_t stack_frame::line() const
+    {
+        return _line;
     }
 
     bool stack_frame::external() const
@@ -54,16 +62,19 @@ namespace puppet { namespace compiler { namespace evaluation {
         return _scope;
     }
 
-    ast::context const& stack_frame::current() const
+    void stack_frame::context(ast::context const& context)
     {
-        return _current;
-    }
+        // Update the context for Puppet frames only
+        if (_external) {
+            return;
+        }
 
-    void stack_frame::current(ast::context value)
-    {
-        // Update the current source for Puppet frames only
-        if (!_external) {
-            _current = rvalue_cast(value);
+        if (context.tree) {
+            _path = context.tree->shared_path();
+            _line = context.begin.line();
+        } else {
+            _path = shared_ptr<string>{};
+            _line = 0;
         }
     }
 
@@ -71,32 +82,32 @@ namespace puppet { namespace compiler { namespace evaluation {
     {
         struct context_visitor : boost::static_visitor<ast::context>
         {
-            ast::context operator()(ast::function_statement const* statement) const
+            result_type operator()(ast::function_statement const* statement) const
             {
                 return *statement;
             }
 
-            ast::context operator()(ast::class_statement const* statement) const
+            result_type operator()(ast::class_statement const* statement) const
             {
                 return *statement;
             }
 
-            ast::context operator()(ast::defined_type_statement const* statement) const
+            result_type operator()(ast::defined_type_statement const* statement) const
             {
                 return *statement;
             }
 
-            ast::context operator()(ast::node_statement const* statement) const
+            result_type operator()(ast::node_statement const* statement) const
             {
                 return *statement;
             }
 
-            ast::context operator()(ast::collector_expression const* expression) const
+            result_type operator()(ast::collector_expression const* expression) const
             {
                 return expression->context();
             }
 
-            ast::context operator()(ast::type_alias_statement const* statement) const
+            result_type operator()(ast::type_alias_statement const* statement) const
             {
                 return statement->context();
             }
@@ -104,13 +115,56 @@ namespace puppet { namespace compiler { namespace evaluation {
         return boost::apply_visitor(context_visitor{}, expression);
     }
 
+    boost::variant<char const*, string> stack_frame::expression_name(expression_type const& expression)
+    {
+        struct name_visitor : boost::static_visitor<boost::variant<char const*, string>>
+        {
+            result_type operator()(ast::function_statement const* statement) const
+            {
+                return statement->name.value.c_str();
+            }
+
+            result_type operator()(ast::class_statement const* statement) const
+            {
+                ostringstream ss;
+                ss << "<class " << statement->name << ">";
+                return ss.str();
+            }
+
+            result_type operator()(ast::defined_type_statement const* statement) const
+            {
+                ostringstream ss;
+                ss << "<define " << statement->name << ">";
+                return ss.str();
+            }
+
+            result_type operator()(ast::node_statement const* statement) const
+            {
+                return "<node>";
+            }
+
+            result_type operator()(ast::collector_expression const* expression) const
+            {
+                return "<collector>";
+            }
+
+            result_type operator()(ast::type_alias_statement const* statement) const
+            {
+                ostringstream ss;
+                ss << "<type alias " << statement->alias << ">";
+                return ss.str();
+            }
+        };
+        return boost::apply_visitor(name_visitor{}, expression);
+    }
+
     ostream& operator<<(ostream& os, stack_frame const& frame)
     {
         os << "in '" << frame.name() << '\'';
 
-        auto& current = frame.current();
-        if (current.tree) {
-            os << " at " << current.tree->path() << ":" << current.begin.line();
+        auto path = frame.path();
+        if (path && *path) {
+            os << " at " << path << ":" << frame.line();
         } else {
             os << " (no source)";
         }

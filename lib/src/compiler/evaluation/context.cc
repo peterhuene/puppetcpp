@@ -1,5 +1,8 @@
 #include <puppet/compiler/evaluation/context.hpp>
 #include <puppet/compiler/evaluation/evaluator.hpp>
+#include <puppet/compiler/evaluation/functions/call_context.hpp>
+#include <puppet/compiler/evaluation/operators/binary/call_context.hpp>
+#include <puppet/compiler/evaluation/operators/unary/call_context.hpp>
 #include <puppet/compiler/lexer/lexer.hpp>
 #include <puppet/compiler/exceptions.hpp>
 #include <puppet/cast.hpp>
@@ -288,10 +291,9 @@ namespace puppet { namespace compiler { namespace evaluation {
         match_scope(context)
     {
         if (_context._call_stack.size() > MAX_STACK_DEPTH) {
-            auto context = _context._call_stack.empty() ? ast::context{} : _context._call_stack.back().current();
             throw evaluation_exception(
                 (boost::format("cannot call '%1%': maximum stack depth reached.") % frame.name()).str(),
-                rvalue_cast(context),
+                ast::context{},
                 _context.backtrace()
             );
         }
@@ -305,17 +307,13 @@ namespace puppet { namespace compiler { namespace evaluation {
 
     context::context() :
         _node(nullptr),
-        _catalog(nullptr),
-        _registry(nullptr),
-        _dispatcher(nullptr)
+        _catalog(nullptr)
     {
     }
 
     context::context(compiler::node& node, compiler::catalog& catalog) :
         _node(&node),
         _catalog(&catalog),
-        _registry(&node.environment().registry()),
-        _dispatcher(&node.environment().dispatcher()),
         _top_scope(make_shared<scope>(node.facts()))
     {
     }
@@ -336,28 +334,16 @@ namespace puppet { namespace compiler { namespace evaluation {
         return *_catalog;
     }
 
-    compiler::registry const& context::registry() const
-    {
-        if (!_registry) {
-            throw evaluation_exception("operation not permitted: registry is not available.", backtrace());
-        }
-        return *_registry;
-    }
-
-    evaluation::dispatcher const& context::dispatcher() const
-    {
-        if (!_dispatcher) {
-            throw evaluation_exception("operation not permitted: function dispatcher is not available.", backtrace());
-        }
-        return *_dispatcher;
-    }
-
     shared_ptr<scope> const& context::current_scope() const
     {
-        if (_call_stack.empty()) {
-            throw evaluation_exception("operation not permitted: the current scope is not available.", backtrace());
+        if (!_call_stack.empty()) {
+            auto& back = _call_stack.back();
+            if (back.scope()) {
+                return back.scope();
+            }
         }
-        return _call_stack.back().scope();
+
+        throw evaluation_exception("operation not permitted: the current scope is not available.", backtrace());
     }
 
     shared_ptr<scope> const& context::top_scope() const
@@ -380,10 +366,13 @@ namespace puppet { namespace compiler { namespace evaluation {
 
     shared_ptr<scope> const& context::calling_scope() const
     {
-        if (_call_stack.size() < 2) {
-            throw evaluation_exception("operation not permitted: there is no calling scope.", backtrace());
+        if (_call_stack.size() >= 2) {
+            auto& caller = _call_stack[_call_stack.size() - 2];
+            if (caller.scope()) {
+                return caller.scope();
+            }
         }
-        return _call_stack[_call_stack.size() - 2].scope();
+        throw evaluation_exception("operation not permitted: there is no calling scope.", backtrace());
     }
 
     bool context::add_scope(std::shared_ptr<evaluation::scope> scope)
@@ -447,6 +436,7 @@ namespace puppet { namespace compiler { namespace evaluation {
         auto var = expression.name.substr(pos + 2);
 
         // Lookup the namespace
+        registry::normalize(ns);
         auto scope = find_scope(ns);
         if (scope) {
             return scope->get(var);
@@ -454,7 +444,7 @@ namespace puppet { namespace compiler { namespace evaluation {
 
         if (warn) {
             string message;
-            if (_registry && !_registry->find_class(ns)) {
+            if (!find_class(ns)) {
                 message = (boost::format("could not look up variable $%1% because class '%2%' is not defined.") % expression.name % ns).str();
             } else if (_catalog && !_catalog->find(types::resource("class", ns))) {
                 message = (boost::format("could not look up variable $%1% because class '%2%' has not been declared.") % expression.name % ns).str();
@@ -482,15 +472,27 @@ namespace puppet { namespace compiler { namespace evaluation {
         return nullptr;
     }
 
-    vector<stack_frame> context::backtrace() const
+    vector<stack_frame> context::backtrace(size_t count) const
     {
-        return vector<stack_frame>{ _call_stack.rbegin(), _call_stack.rend() };
+        vector<stack_frame> result;
+        append_backtrace(result, count);
+        return result;
     }
 
-    void context::current_context(ast::context context)
+    void context::append_backtrace(vector<stack_frame>& backtrace, size_t count) const
+    {
+        copy_n(_call_stack.rbegin(), min(count, _call_stack.size()), back_inserter(backtrace));
+    }
+
+    size_t context::call_stack_size() const
+    {
+        return _call_stack.size();
+    }
+
+    void context::current_context(ast::context const& context)
     {
         if (!_call_stack.empty()) {
-            _call_stack.back().current(rvalue_cast(context));
+            _call_stack.back().context(context);
         }
     }
 
@@ -543,14 +545,12 @@ namespace puppet { namespace compiler { namespace evaluation {
     {
         auto& catalog = this->catalog();
 
-        // Ensure the name is in the expected format
-        types::klass::normalize(name);
-
         // Find the class definition
+        registry::normalize(name);
         auto klass = find_class(name);
         if (!klass) {
             throw evaluation_exception(
-                (boost::format("cannot evaluate class '%1%' because it has not been defined.") %
+                (boost::format("cannot declare class '%1%' because it has not been defined.") %
                  name
                 ).str(),
                 context,
@@ -611,84 +611,81 @@ namespace puppet { namespace compiler { namespace evaluation {
         return resource;
     }
 
-    klass const* context::find_class(string name, bool import)
+    klass const* context::find_class(string const& name)
     {
-        auto& registry = this->registry();
-
-        types::klass::normalize(name);
-
-        auto klass = registry.find_class(name);
-        if (!klass && import && _node) {
-            // Attempt to import the class
-            _node->environment().import(_node->logger(), find_type::manifest, name);
-            klass = registry.find_class(name);
+        if (!_node) {
+            return nullptr;
         }
+
+        // TODO: check local cache
+
+        auto klass = _node->environment().find_class(_node->logger(), name);
+
+        // TODO: set in local cache (even if nullptr)
         return klass;
     }
 
-    compiler::defined_type const* context::find_defined_type(string name, bool import)
+    compiler::defined_type const* context::find_defined_type(string const& name)
     {
-        auto& registry = this->registry();
-
-        // Ensure the name is in the expected format
-        types::klass::normalize(name);
-
-        auto definition = registry.find_defined_type(name);
-        if (!definition && import && _node) {
-            // Attempt to import the defined type
-            _node->environment().import(_node->logger(), find_type::manifest, name);
-
-            // Find it again
-            definition = registry.find_defined_type(name);
+        if (!_node) {
+            return nullptr;
         }
-        return definition;
+
+        // TODO: check local cache
+
+        auto type = _node->environment().find_defined_type(_node->logger(), name);
+
+        // TODO: set in local cache (even if nullptr)
+        return type;
     }
 
-    functions::descriptor* context::find_function(string const& name, bool import)
+    functions::descriptor const* context::find_function(string const& name, ast::context const& context)
     {
-        return const_cast<functions::descriptor*>(static_cast<context const*>(this)->find_function(name, import));
-    }
-
-    functions::descriptor const* context::find_function(string const& name, bool import) const
-    {
-        auto& dispatcher = this->dispatcher();
-        auto descriptor = dispatcher.find(name);
-        if (!descriptor && import && _node) {
-            // Attempt to import the function and find it again
-            _node->environment().import(_node->logger(), find_type::function, name);
-            descriptor = dispatcher.find(name);
+        if (!_node) {
+            return nullptr;
         }
+
+        // TODO: check local cache
+
+        auto descriptor = _node->environment().find_function(_node->logger(), name, context);
+
+        // TODO: set in local cache (even if nullptr)
         return descriptor;
     }
 
-    compiler::type_alias* context::find_type_alias(string const& name, bool import)
+    compiler::type_alias const* context::find_type_alias(string const& name)
     {
-        return const_cast<compiler::type_alias*>(static_cast<context const*>(this)->find_type_alias(name, import));
-    }
-
-    compiler::type_alias const* context::find_type_alias(string const& name, bool import) const
-    {
-        auto& registry = this->registry();
-
-        auto alias = registry.find_type_alias(name);
-        if (!alias && import && _node) {
-            // Attempt to import the alias using a lowercase name and find it again
-            _node->environment().import(_node->logger(), find_type::type, name);
-            alias = registry.find_type_alias(name);
+        if (!_node) {
+            return nullptr;
         }
+
+        // TODO: check local cache
+
+        auto alias = _node->environment().find_type_alias(_node->logger(), name);
+
+        // TODO: set in local cache (even if nullptr)
         return alias;
     }
 
-    shared_ptr<values::type> context::resolve_type_alias(string const& name)
+    resource_type const* context::find_resource_type(string const& name, ast::context const& context)
     {
-        auto it = _resolved_type_aliases.find(name);
-        if (it != _resolved_type_aliases.end()) {
-            return it->second;
+        if (!_node) {
+            return nullptr;
         }
 
-        auto alias = find_type_alias(name);
-        if (!alias) {
-            return nullptr;
+        // TODO: check local cache
+
+        auto type = _node->environment().find_resource_type(_node->logger(), name, context);
+
+        // TODO: set in local cache (even if nullptr)
+        return type;
+    }
+
+    shared_ptr<values::type> context::resolve(type_alias const* alias)
+    {
+        auto it = _resolved_type_aliases.find(alias);
+        if (it != _resolved_type_aliases.end()) {
+            return it->second;
         }
 
         // Push a frame indicating an alias resolution
@@ -696,13 +693,13 @@ namespace puppet { namespace compiler { namespace evaluation {
 
         // Initially map to an Any type
         auto resolved = make_shared<values::type>();
-        _resolved_type_aliases[name] = resolved;
+        _resolved_type_aliases[alias] = resolved;
 
         auto type = values::type::create(alias->statement().type, this);
         if (!type) {
             throw evaluation_exception(
                 (boost::format("expected type alias '%1%' to evaluate to a type.") %
-                 name
+                 alias->statement().alias
                 ).str(),
                 alias->statement().alias,
                 backtrace()
@@ -722,30 +719,6 @@ namespace puppet { namespace compiler { namespace evaluation {
             );
         }
         return resolved;
-    }
-
-    bool context::is_defined(string name, bool check_classes, bool checked_defined_types)
-    {
-        auto& registry = this->registry();
-
-        if (!check_classes && !checked_defined_types) {
-            return false;
-        }
-
-        types::klass::normalize(name);
-
-        // Check for class or defined type
-        if ((check_classes && registry.find_class(name)) || (checked_defined_types && registry.find_defined_type(name))) {
-            return true;
-        }
-
-        if (!_node) {
-            return false;
-        }
-
-        // Try to import a manifest with the name and check again
-        _node->environment().import(_node->logger(), find_type::manifest, name);
-        return (check_classes && registry.find_class(name)) || (checked_defined_types && registry.find_defined_type(name));
     }
 
     void context::add(resource_relationship relationship)
@@ -790,6 +763,78 @@ namespace puppet { namespace compiler { namespace evaluation {
         catalog();
 
         _collectors.emplace_back(rvalue_cast(collector));
+    }
+
+    values::value context::dispatch(functions::call_context& context)
+    {
+        functions::descriptor const* descriptor = nullptr;
+
+        // TODO: check local cache
+
+        if (!descriptor && _node) {
+            descriptor = _node->environment().find_function(_node->logger(), context.name().value, context.name());
+        }
+
+        if (!descriptor) {
+            throw evaluation_exception(
+                (boost::format("function '%1%' was not found.") %
+                 context.name()
+                ).str(),
+                context.name(),
+                context.context().backtrace()
+            );
+        }
+
+        // TODO: set in local cache (even if nullptr)
+        return descriptor->dispatch(context);
+    }
+
+    values::value context::dispatch(operators::binary::call_context& context)
+    {
+        operators::binary::descriptor const* descriptor = nullptr;
+
+        // TODO: check local cache
+
+        if (!descriptor && _node) {
+            descriptor = _node->environment().find_binary_operator(context.oper());
+        }
+
+        if (!descriptor) {
+            throw evaluation_exception(
+                (boost::format("unknown binary operator '%1%'.") %
+                 context.oper()
+                ).str(),
+                context.operator_context(),
+                context.context().backtrace()
+            );
+        }
+
+        // TODO: set in local cache (even if nullptr)
+        return descriptor->dispatch(context);
+    }
+
+    values::value context::dispatch(operators::unary::call_context& context)
+    {
+        operators::unary::descriptor const* descriptor = nullptr;
+
+        // TODO: check local cache
+
+        if (!descriptor && _node) {
+            descriptor = _node->environment().find_unary_operator(context.oper());
+        }
+
+        if (!descriptor) {
+            throw evaluation_exception(
+                (boost::format("unknown unary operator '%1%'.") %
+                 context.oper()
+                ).str(),
+                context.operator_context(),
+                context.context().backtrace()
+            );
+        }
+
+        // TODO: set in local cache (even if nullptr)
+        return descriptor->dispatch(context);
     }
 
     void context::evaluate_overrides(runtime::types::resource const& resource)

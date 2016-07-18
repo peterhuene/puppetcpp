@@ -192,6 +192,7 @@ Build Requirements
 * [ICU](http://site.icu-project.org/) >= 57.1
 * [Onigmo](https://github.com/k-takata/Onigmo) >= 5.15.0 (build with `--enable-multithread`)
 * [Facter](https://github.com/puppetlabs/facter) >= 3.0
+* [Puppet Ruby Host](https://github.com/peterhuene/puppet-ruby-host) >= 0.1.0
 * [yaml-cpp](https://github.com/jbeder/yaml-cpp) >= 0.5.1
 * [Editline](http://thrysoee.dk/editline/) (optional - improves the REPL experience)
 
@@ -204,21 +205,23 @@ Before building, use `cmake` to generate build files:
 
     $ mkdir release
     $ cd release
-    $ cmake ..
+    $ cmake -DPUPPET_RUBY_HOST_ROOT=<root> ..
+
+Where `PUPPET_RUBY_HOST_ROOT` specifies the path to the root directory for `puppet-ruby-host`.
 
 To generate a fully debug build use `-DCMAKE_BUILD_TYPE=Debug` when invoking `cmake`.
 
 To speed up builds, it is recommended to use [ccache](https://ccache.samba.org/) as the "compiler":
 
     $ cd release
-    $ CCACHE_SLOPPINESS=pch_defines,time_macros cmake .. -DCMAKE_C_COMPILER=$(which ccache) -DCMAKE_C_COMPILER_ARG1=cc -DCMAKE_CXX_COMPILER=$(which ccache) -DCMAKE_CXX_COMPILER_ARG1=c++
+    $ CCACHE_SLOPPINESS=pch_defines,time_macros cmake .. -DPUPPET_RUBY_HOST_ROOT=<root> -DCMAKE_C_COMPILER=$(which ccache) -DCMAKE_C_COMPILER_ARG1=cc -DCMAKE_CXX_COMPILER=$(which ccache) -DCMAKE_CXX_COMPILER_ARG1=c++
 
 **Note: the environment variable `CCACHE_SLOPPINESS` must be set to `pch_defines,time_macros` for precompiled headers to work with ccache.**
 
 Also consider using [Ninja](https://ninja-build.org/) as a replacement for GNU Make:
 
     $ cd release
-    $ cmake .. -GNinja -DDISABLE_PCH=1 -DCMAKE_C_COMPILER=$(which ccache) -DCMAKE_C_COMPILER_ARG1=cc -DCMAKE_CXX_COMPILER=$(which ccache) -DCMAKE_CXX_COMPILER_ARG1=c++
+    $ cmake .. -DPUPPET_RUBY_HOST_ROOT=<root> -GNinja -DDISABLE_PCH=1 -DCMAKE_C_COMPILER=$(which ccache) -DCMAKE_C_COMPILER_ARG1=cc -DCMAKE_CXX_COMPILER=$(which ccache) -DCMAKE_CXX_COMPILER_ARG1=c++
 
 Then use `ninja` instead of `make` in the examples below.
 
@@ -279,7 +282,7 @@ By default, puppetcpp will install files into `/usr/local/bin`, `/usr/local/lib`
 To install to a different location, set the install prefix:
 
     $ cd release
-    $ cmake -DCMAKE_INSTALL_PREFIX=~/puppetcpp ..
+    $ cmake -DPUPPET_RUBY_HOST_ROOT=<root> -DCMAKE_INSTALL_PREFIX=~/puppetcpp ..
     $ make clean install
 
 This would install puppetcpp into `~/puppetcpp/bin`, `~/puppetcpp/lib`, and `~/puppetcpp/include`.

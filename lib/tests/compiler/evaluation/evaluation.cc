@@ -119,8 +119,9 @@ SCENARIO("evaluating manifests", "[evaluation]")
 
             ostringstream buffer;
             test_logger logger{ buffer };
+            logger.trace(true);
             auto environment = compiler::environment::create(logger, settings);
-            environment->dispatcher().add_builtins();
+            environment->register_builtins();
             compiler::node node{ logger, "test", environment, nullptr };
 
             try {
@@ -148,8 +149,9 @@ SCENARIO("evaluating manifests", "[evaluation]")
 
         stringstream buffer;
         test_logger logger{ buffer };
+        logger.trace(true);
         auto environment = compiler::environment::create(logger, settings);
-        environment->dispatcher().add_builtins();
+        environment->register_builtins();
         compiler::node node{ logger, "test", environment, nullptr };
 
         try {

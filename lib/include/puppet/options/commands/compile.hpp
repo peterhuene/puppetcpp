@@ -79,6 +79,13 @@ namespace puppet { namespace options { namespace commands {
         std::string get_graph_file(boost::program_options::variables_map const& options) const;
 
         /**
+         * Gets the ruby host from the given parsed options.
+         * @param options The parsed options.
+         * @return Returns the ruby host.
+         */
+        std::string get_ruby_host(boost::program_options::variables_map const& options) const;
+
+        /**
          * The facts option name.
          */
         static char const* const FACTS_OPTION;
@@ -118,6 +125,14 @@ namespace puppet { namespace options { namespace commands {
          * The output option description.
          */
         static char const* const OUTPUT_DESCRIPTION;
+        /**
+         * The ruby host option name.
+         */
+        static char const* const RUBY_HOST_OPTION;
+        /**
+         * The ruby host option description.
+         */
+        static char const* const RUBY_HOST_DESCRIPTION;
         /**
          * The trace option name.
          */

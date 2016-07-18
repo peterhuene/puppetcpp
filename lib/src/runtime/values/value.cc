@@ -12,8 +12,69 @@ using namespace std;
 using namespace rapidjson;
 using namespace puppet::runtime;
 using namespace puppet::compiler::evaluation;
+using namespace PuppetRubyHost;
 
 namespace puppet { namespace runtime { namespace values {
+
+    value::value(Protocols::Value const& value)
+    {
+        switch (value.kind_case()) {
+            case Protocols::Value::kSymbol:
+                if (value.symbol() == Protocols::Value_Symbol_UNDEF) {
+                    *this = values::undef{};
+                } else if (value.symbol() == Protocols::Value_Symbol_DEFAULT) {
+                    *this = values::defaulted{};
+                } else {
+                    throw runtime_error("unexpected symbolic enumeration.");
+                }
+                break;
+
+            case Protocols::Value::kInteger:
+                *this = value.integer();
+                break;
+
+            case Protocols::Value::kFloat:
+                *this = value.float_();
+                break;
+
+            case Protocols::Value::kBoolean:
+                *this = value.boolean();
+                break;
+
+            case Protocols::Value::kString:
+                *this = value.string();
+                break;
+
+            case Protocols::Value::kRegexp:
+                *this = values::regex{ value.regexp() };
+                break;
+
+            case Protocols::Value::kType:
+                // TODO: parse type!
+                break;
+
+            case Protocols::Value::kArray: {
+                values::array array;
+                for (auto const& element : value.array().elements()) {
+                    array.emplace_back(values::value{ element });
+                }
+                *this = rvalue_cast(array);
+                break;
+            }
+
+            case Protocols::Value::kHash: {
+                values::hash hash;
+                for (auto const& kvp : value.hash().elements()) {
+                    hash.set(values::value{ kvp.key() }, values::value{ kvp.value() });
+                }
+                *this = rvalue_cast(hash);
+                break;
+            }
+
+            default:
+                throw runtime_error("unexpected value kind.");
+        }
+    }
 
     value::value(values::wrapper<value>&& wrapper) :
         value_base(rvalue_cast(static_cast<value_base&>(wrapper.get())))
@@ -510,6 +571,110 @@ namespace puppet { namespace runtime { namespace values {
         return result;
     }
 
+    struct protocol_visitor : boost::static_visitor<void>
+    {
+        explicit protocol_visitor(Protocols::Value& value) :
+            _value(value)
+        {
+        }
+
+        void operator()(undef const&) const
+        {
+            _value.set_symbol(Protocols::Value_Symbol_UNDEF);
+        }
+
+        void operator()(defaulted const&) const
+        {
+            _value.set_symbol(Protocols::Value_Symbol_DEFAULT);
+        }
+
+        void operator()(int64_t value) const
+        {
+            _value.set_integer(value);
+        }
+
+        void operator()(double value) const
+        {
+            _value.set_float_(value);
+        }
+
+        void operator()(bool value) const
+        {
+            _value.set_boolean(value);
+        }
+
+        void operator()(string const& value) const
+        {
+            _value.set_string(value);
+        }
+
+        void operator()(values::regex const& value) const
+        {
+            _value.set_regexp(value.pattern());
+        }
+
+        void operator()(values::type const& type) const
+        {
+            _value.set_type(boost::lexical_cast<string>(type).c_str());
+        }
+
+        void operator()(values::variable const& value) const
+        {
+            boost::apply_visitor(*this, value.value());
+        }
+
+        void operator()(values::array const& value) const
+        {
+            auto array = _value.mutable_array();
+
+            for (auto const& element : value) {
+                auto e = array->add_elements();
+                boost::apply_visitor(protocol_visitor{ *e }, *element);
+            }
+        }
+
+        void operator()(values::hash const& value) const
+        {
+            auto hash = _value.mutable_hash();
+
+            for (auto const& element : value) {
+                auto e = hash->add_elements();
+
+                auto k = e->mutable_key();
+                boost::apply_visitor(protocol_visitor{ *k }, element.key());
+
+                auto v = e->mutable_value();
+                boost::apply_visitor(protocol_visitor{ *v }, element.value());
+            }
+        }
+
+        void operator()(values::iterator const& value) const
+        {
+            auto array = _value.mutable_array();
+
+            value.each([&](auto const* key, auto const& value) {
+                auto e = array->add_elements();
+                if (key) {
+                    values::array subarray;
+                    subarray.push_back(*key);
+                    subarray.push_back(value);
+                    protocol_visitor{ *e }(subarray);
+                } else {
+                    boost::apply_visitor(protocol_visitor{ *e }, value);
+                }
+                return true;
+            });
+        }
+
+     private:
+        Protocols::Value& _value;
+    };
+
+    void value::to_protocol_value(Protocols::Value& value) const
+    {
+        boost::apply_visitor(protocol_visitor{ value }, *this);
+    }
+
     struct value_printer : boost::static_visitor<ostream&>
     {
         explicit value_printer(ostream& os) :
@@ -600,8 +765,8 @@ namespace puppet { namespace runtime { namespace values {
                     return;
                 }
             } else if (auto klass = boost::get<pt::klass>(type)) {
-                if (!klass->title().empty()) {
-                    callback(runtime::types::resource("class", klass->title()));
+                if (!klass->class_name().empty()) {
+                    callback(runtime::types::resource("class", klass->class_name()));
                     return;
                 }
             } else if (auto runtime = boost::get<pt::runtime>(type)) {
@@ -634,7 +799,7 @@ namespace puppet { namespace runtime { namespace values {
 
     struct json_visitor : boost::static_visitor<json_value>
     {
-        json_visitor(json_allocator& allocator) :
+        explicit json_visitor(json_allocator& allocator) :
             _allocator(allocator)
         {
         }

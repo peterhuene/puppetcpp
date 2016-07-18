@@ -8,7 +8,7 @@ script:
   - >
     docker run -v `pwd`:/puppetcpp peterhuene/puppetcpp-ci /bin/sh -c "
     cd /puppetcpp &&
-    cmake . -DTEST_COVERAGE=$TEST_COVERAGE -DCMAKE_BUILD_TYPE=$BUILD &&
+    cmake . -DTEST_COVERAGE=$TEST_COVERAGE -DCMAKE_BUILD_TYPE=$BUILD -DPUPPET_RUBY_HOST_ROOT=/tmp/puppet-ruby-host &&
     make -j 2 &&
     mkdir -p /etc/puppetlabs/code/environments/production &&
     bin/puppetcpp help &&

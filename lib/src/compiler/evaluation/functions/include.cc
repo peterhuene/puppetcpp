@@ -11,14 +11,14 @@ namespace puppet { namespace compiler { namespace evaluation { namespace functio
 
     static void declare_class(evaluation::context& context, types::klass const& klass, ast::context const& declaration_context, boost::optional<compiler::relationship> const& relationship)
     {
-        types::resource type("class", klass.title());
+        types::resource type("class", klass.class_name());
 
         if (!type.fully_qualified()) {
             throw evaluation_exception("cannot declare a class with an unspecified title.", declaration_context, context.backtrace());
         }
 
         // Declare the class
-        auto resource = context.declare_class(klass.title(), declaration_context);
+        auto resource = context.declare_class(klass.class_name(), declaration_context);
 
         // Add a relationship to the current resource
         if (relationship) {

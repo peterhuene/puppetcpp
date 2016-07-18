@@ -6,11 +6,12 @@
 #include <iomanip>
 
 using namespace std;
+using namespace PuppetRubyHost::Protocols;
 
 namespace puppet { namespace compiler {
 
     argument_exception::argument_exception(std::string const& message, size_t index) :
-        runtime_error(message),
+        compiler_exception(message),
         _index(index)
     {
     }
@@ -21,7 +22,7 @@ namespace puppet { namespace compiler {
     }
 
     parse_exception::parse_exception(string const& message, lexer::position begin, lexer::position end) :
-        runtime_error(message),
+        compiler_exception(message),
         _begin(rvalue_cast(begin)),
         _end(rvalue_cast(end))
     {
@@ -65,13 +66,13 @@ namespace puppet { namespace compiler {
     }
 
     evaluation_exception::evaluation_exception(string const& message, vector<evaluation::stack_frame> backtrace) :
-        runtime_error(message),
+        compiler_exception(message),
         _backtrace(rvalue_cast(backtrace))
     {
     }
 
     evaluation_exception::evaluation_exception(string const& message, ast::context context, vector<evaluation::stack_frame> backtrace) :
-        runtime_error(message),
+        compiler_exception(message),
         _context(rvalue_cast(context)),
         _backtrace(rvalue_cast(backtrace))
     {
@@ -93,7 +94,7 @@ namespace puppet { namespace compiler {
     }
 
     compilation_exception::compilation_exception(string const& message, string path, size_t line, size_t column, size_t length, string text) :
-        runtime_error(message),
+        compiler_exception(message),
         _path(rvalue_cast(path)),
         _line(line),
         _column(column),
@@ -103,7 +104,7 @@ namespace puppet { namespace compiler {
     }
 
     compilation_exception::compilation_exception(parse_exception const& ex, string const& path, string const& source) :
-        runtime_error(ex.what()),
+        compiler_exception(ex.what()),
         _path(path),
         _line(ex.begin().line()),
         _column(0),
@@ -126,7 +127,7 @@ namespace puppet { namespace compiler {
     }
 
     compilation_exception::compilation_exception(evaluation_exception const& ex) :
-        runtime_error(ex.what()),
+        compiler_exception(ex.what()),
         _line(0),
         _column(0),
         _length(0),

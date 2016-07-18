@@ -7,6 +7,7 @@
 #include "lexer/position.hpp"
 #include "evaluation/stack_frame.hpp"
 #include "../cast.hpp"
+#include <exception.pb.h>
 #include <boost/spirit/home/x3.hpp>
 #include <string>
 #include <exception>
@@ -23,9 +24,17 @@ namespace puppet { namespace compiler {
     }
 
     /**
+     * Base exception for compiler exceptions.
+     */
+    struct compiler_exception : std::runtime_error
+    {
+        using std::runtime_error::runtime_error;
+    };
+
+    /**
      * Exception for arguments passed by index.
      */
-    struct argument_exception : std::runtime_error
+    struct argument_exception : compiler_exception
     {
         /**
          * Constructs a new argument exception.
@@ -49,7 +58,7 @@ namespace puppet { namespace compiler {
      * @tparam Iterator The iterator type.
      */
     template <typename Iterator>
-    struct lexer_exception : std::runtime_error
+    struct lexer_exception : compiler_exception
     {
         /**
          * Constructs a lexer exception.
@@ -58,7 +67,7 @@ namespace puppet { namespace compiler {
          * @param end The ending iterator (exclusive) where lexing failed.
          */
         lexer_exception(std::string const& message, Iterator begin, Iterator end) :
-            std::runtime_error(message),
+            compiler_exception(message),
             _begin(rvalue_cast(begin)),
             _end(rvalue_cast(end))
         {
@@ -90,7 +99,7 @@ namespace puppet { namespace compiler {
     /**
      * Exception for parse errors.
      */
-    struct parse_exception : std::runtime_error
+    struct parse_exception : compiler_exception
     {
         /**
          * Constructs a parse exception for the token where lexing failed.
@@ -99,7 +108,7 @@ namespace puppet { namespace compiler {
          */
         template <typename Token>
         explicit parse_exception(Token const& token) :
-            std::runtime_error(format_message(static_cast<lexer::token_id>(token.id())))
+            compiler_exception(format_message(static_cast<lexer::token_id>(token.id())))
         {
             std::tie(_begin, _end) = boost::apply_visitor(lexer::token_range_visitor(), token.value());
         }
@@ -176,14 +185,14 @@ namespace puppet { namespace compiler {
     /**
      * Exception for evaluation errors.
      */
-    struct evaluation_exception : std::runtime_error
+    struct evaluation_exception : compiler_exception
     {
         /**
          * Constructs an evaluation exception.
          * @param message The exception message.
          * @param backtrace The evaluation backtrace.
          */
-        evaluation_exception(std::string const& message, std::vector<evaluation::stack_frame> backtrace);
+        evaluation_exception(std::string const& message, std::vector<evaluation::stack_frame> backtrace = {});
 
         /**
          * Constructs an evaluation exception.
@@ -191,7 +200,7 @@ namespace puppet { namespace compiler {
          * @param context The AST context where evaluation failed.
          * @param backtrace The evaluation backtrace.
          */
-        evaluation_exception(std::string const& message, ast::context context, std::vector<evaluation::stack_frame> backtrace);
+        evaluation_exception(std::string const& message, ast::context context, std::vector<evaluation::stack_frame> backtrace = {});
 
         /**
          * Gets the AST context where evaluation failed.
@@ -214,7 +223,7 @@ namespace puppet { namespace compiler {
     /**
      * Exception for compilation errors.
      */
-    struct compilation_exception : std::runtime_error
+    struct compilation_exception : compiler_exception
     {
         /**
          * Constructs a compilation exception.
@@ -226,6 +235,13 @@ namespace puppet { namespace compiler {
          * @param text The line of text containing the compilation error.
          */
         explicit compilation_exception(std::string const& message, std::string path = std::string(), size_t line = 0, size_t column = 0, size_t length = 0, std::string text = std::string());
+
+        /**
+         * Constructs a compilation exception.
+         * @param message The exception message.
+         * @param backtrace The backtrace for the exception.
+         */
+        compilation_exception(std::string const& message, std::vector<evaluation::stack_frame> backtrace);
 
         /**
          * Constructs a compilation exception from a parse exception.

@@ -4,6 +4,8 @@
 #include <puppet/compiler/exceptions.hpp>
 #include <puppet/utility/filesystem/helpers.hpp>
 #include <boost/filesystem.hpp>
+#include <grpc++/create_channel.h>
+#include <grpc++/security/credentials.h>
 
 #ifdef USE_Editline
 #include <editline/readline.h>
@@ -42,14 +44,7 @@ static void repl_loop(evaluation::context& context)
     rl_bind_key('\t', rl_insert);
 
     // Create a REPL and loop
-    evaluation::repl repl{
-        context,
-        [&](compilation_exception const& ex) {
-            auto& logger = context.node().logger();
-            LOG(error, ex.line(), ex.column(), ex.length(), ex.text(), ex.path(), ex.what());
-        }
-    };
-
+    evaluation::repl repl{ context  };
     while (auto line = readline(repl.prompt().c_str())) {
         if (line && repl.line() == 1 && strcmp(line, "exit") == 0) {
             free(line);
@@ -58,7 +53,14 @@ static void repl_loop(evaluation::context& context)
         auto result = repl.evaluate(line);
         free(line);
         if (result) {
-            output_result(result->value);
+            if (result->exception) {
+                auto& logger = context.node().logger();
+                auto& ex = *result->exception;
+                LOG(error, ex.line(), ex.column(), ex.length(), ex.text(), ex.path(), ex.what());
+                logger.log(ex.backtrace());
+            } else {
+                output_result(result->value);
+            }
             add_history(result->source.c_str());
         }
     }
@@ -143,6 +145,8 @@ namespace puppet { namespace options { namespace commands {
             (NODE_OPTION_FULL, po::value<string>(), NODE_DESCRIPTION)
             (NO_COLOR_OPTION, NO_COLOR_DESCRIPTION)
             (OUTPUT_OPTION_FULL, po::value<string>(), OUTPUT_DESCRIPTION)
+            (RUBY_HOST_OPTION, po::value<string>(), RUBY_HOST_DESCRIPTION)
+            (TRACE_OPTION, TRACE_DESCRIPTION)
             (VERBOSE_OPTION, VERBOSE_DESCRIPTION)
             ;
         return options;
@@ -172,6 +176,8 @@ namespace puppet { namespace options { namespace commands {
         auto settings = create_settings(options);
         auto output_file = get_output_file(options);
         auto graph_file = get_graph_file(options);
+        auto ruby_host = get_ruby_host(options);
+        bool trace = options.count(TRACE_OPTION) > 0;
 
         // Move the options into the lambda capture
         return {
@@ -184,16 +190,28 @@ namespace puppet { namespace options { namespace commands {
                 settings = rvalue_cast(settings),
                 output_file = rvalue_cast(output_file),
                 graph_file = rvalue_cast(graph_file),
+                ruby_host = rvalue_cast(ruby_host),
+                trace = trace,
                 this
             ] () {
                 logging::console_logger logger;
                 logger.level(level);
+                logger.trace(trace);
 
                 // TODO: support color/no-color options
 
                 try {
-                    auto environment = compiler::environment::create(logger, settings);
-                    environment->dispatcher().add_builtins();
+                    shared_ptr<grpc::Channel> channel;
+                    if (ruby_host.empty()) {
+                        LOG(info, "no Ruby host specified: Ruby support is disabled.");
+                    } else {
+                        LOG(info, "using Ruby host at '%1%'.", ruby_host);
+                        channel = grpc::CreateChannel(ruby_host.c_str(), grpc::InsecureChannelCredentials());
+                    }
+
+                    auto environment = compiler::environment::create(logger, settings, rvalue_cast(channel));
+                    environment->register_builtins();
+
                     compiler::node node{ logger, node_name, rvalue_cast(environment), facts };
                     compiler::catalog catalog{ node.name(), node.environment().name() };
                     auto context = node.create_context(catalog);
@@ -231,6 +249,7 @@ namespace puppet { namespace options { namespace commands {
                     } catch (evaluation_exception const& ex) {
                         compilation_exception info{ ex };
                         LOG(error, info.line(), info.column(), info.length(), info.text(), info.path(), info.what());
+                        logger.log(ex.backtrace());
                     } catch (resource_cycle_exception const& ex) {
                         LOG(error, ex.what());
                     }

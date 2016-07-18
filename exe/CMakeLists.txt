@@ -2,6 +2,7 @@ include_directories(
     ../lib/include/
     ${Boost_INCLUDE_DIRS}
     ${Onigmo_INCLUDE_DIRS}
+    ${CMAKE_BINARY_DIR}/lib # For generated GRPC files
 )
 
 add_executable(puppetcpp

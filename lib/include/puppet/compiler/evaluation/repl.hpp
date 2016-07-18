@@ -5,11 +5,7 @@
 #pragma once
 
 #include "context.hpp"
-#include "../lexer/static_lexer.hpp"
-#include "../lexer/lexer.hpp"
-#include "../scanner.hpp"
 #include "../exceptions.hpp"
-#include "evaluator.hpp"
 #include <boost/optional.hpp>
 #include <string>
 #include <vector>
@@ -36,14 +32,18 @@ namespace puppet { namespace compiler { namespace evaluation {
              * Stores the resulting value of the evaluation.
              */
             runtime::values::value value;
+
+            /**
+             * Stores the resulting exception or none if the evaluation completed successfully.
+             */
+            boost::optional<compilation_exception> exception;
         };
 
         /**
          * Constructs a new REPL with the given evaluation context.
          * @param context The evaluation context to use.
-         * @param error_handler The error handler to use for the REPL.
          */
-        explicit repl(evaluation::context& context, std::function<void(compilation_exception const&)> error_handler = nullptr);
+        explicit repl(evaluation::context& context);
 
         /**
          * Gets the current prompt.
@@ -81,15 +81,9 @@ namespace puppet { namespace compiler { namespace evaluation {
 
      private:
         friend struct evaluation_helper;
-        using lexer_type = compiler::lexer::string_static_lexer;
-        std::function<void(logging::level, std::string const&, lexer::position const&, size_t)> create_lexer_callback(evaluation::context& context);
         void complete(bool multiline);
 
-        std::function<void(compilation_exception const&)> _error_handler;
-        lexer_type _lexer;
-        compiler::scanner _scanner;
-        evaluation::evaluator _evaluator;
-        std::vector<std::shared_ptr<ast::syntax_tree>> _trees;
+        evaluation::context& _context;
         std::string _buffer;
         std::string _prompt;
         size_t _count = 1;

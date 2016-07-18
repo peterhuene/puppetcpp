@@ -1,0 +1,3 @@
+Error: alias_conflict_defined_type.pp:4:6: node 'test': type alias 'Foo' conflicts with a defined type of the same name defined at alias_conflict_defined_type.pp:1.
+  type Foo = Integer
+       ^~~

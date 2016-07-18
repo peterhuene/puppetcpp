@@ -251,7 +251,7 @@ SCENARIO("getting ranges of tokens", "[lexer]")
 
         AND_WHEN("given the string as input") {
             auto& input = contents;
-            REQUIRE(get_last_position(input).offset() == 159);
+            REQUIRE(get_last_position(input).offset() == 160);
             auto input_begin = lex_begin(input);
             auto input_end = lex_end(input);
 
@@ -279,9 +279,9 @@ SCENARIO("getting ranges of tokens", "[lexer]")
             }
             THEN("the text and column for the last position should match the last line") {
                 auto line = get_line_info(input, get_last_position(input).offset(), 1);
-                REQUIRE(line.column == 2);
+                REQUIRE(line.column == 1);
                 REQUIRE(line.length == 0);
-                REQUIRE(line.text == "'");
+                REQUIRE(line.text == "");
             }
         }
         AND_WHEN("using an iterator range as input") {

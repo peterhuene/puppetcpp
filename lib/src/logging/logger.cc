@@ -33,13 +33,6 @@ namespace puppet { namespace logging {
         return out;
     }
 
-    logger::logger() :
-        _warnings(0),
-        _errors(0),
-        _level(logging::level::notice)
-    {
-    }
-
     void logger::log(logging::level level, string const& message)
     {
         if (!would_log(level)) {
@@ -63,7 +56,7 @@ namespace puppet { namespace logging {
 
     void logger::log(vector<compiler::evaluation::stack_frame> const& backtrace)
     {
-        if (!would_log(logging::level::error) || backtrace.empty()) {
+        if (!_trace || !would_log(logging::level::error) || backtrace.empty()) {
             return;
         }
 
@@ -88,6 +81,16 @@ namespace puppet { namespace logging {
     void logger::level(logging::level level)
     {
         _level = level;
+    }
+
+    bool logger::trace() const
+    {
+        return _trace;
+    }
+
+    void logger::trace(bool trace)
+    {
+        _trace = trace;
     }
 
     void logger::reset()

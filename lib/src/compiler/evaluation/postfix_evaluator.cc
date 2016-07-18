@@ -90,11 +90,8 @@ namespace puppet { namespace compiler { namespace evaluation {
 
         void operator()(method_call_expression const& expression)
         {
-            // Find the function before executing the call to ensure it is imported
-            _evaluator.context().find_function(expression.method.value);
-
             functions::call_context context{ _evaluator.context(), expression, _value, _value_context, _splat };
-            _value = _evaluator.context().dispatcher().dispatch(context);
+            _value = _evaluator.context().dispatch(context);
             _value_context.end = expression.context().end;
         }
 

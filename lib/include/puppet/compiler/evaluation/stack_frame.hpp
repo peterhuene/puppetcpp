@@ -5,6 +5,7 @@
 #pragma once
 
 #include "../ast/ast.hpp"
+#include <exception.pb.h>
 #include <boost/variant.hpp>
 #include <memory>
 
@@ -36,20 +37,38 @@ namespace puppet { namespace compiler { namespace evaluation {
          * @param scope The associated scope.
          * @param external True if the frame is external (not Puppet) or false if the frame is Puppet.
          */
-        explicit stack_frame(char const* name, std::shared_ptr<evaluation::scope> scope, bool external = true);
+        stack_frame(char const* name, std::shared_ptr<evaluation::scope> scope, bool external = true);
 
         /**
          * Constructs a stack frame for the given expression.
          * @param expression The expression associated with the stack frame.
          * @param scope The associated scope.
          */
-        explicit stack_frame(expression_type expression, std::shared_ptr<evaluation::scope> scope);
+        stack_frame(expression_type const& expression, std::shared_ptr<evaluation::scope> scope);
+
+        /**
+         * Constructs a stack frame from a ruby host representation.
+         * @param frame The ruby host respresentation of the stack frame.
+         */
+        explicit stack_frame(PuppetRubyHost::Protocols::Exception::StackFrame const& frame);
 
         /**
          * Gets the name of frame.
          * @return Returns the name of the frame.
          */
-        std::string name() const;
+        char const* name() const;
+
+        /**
+         * Gets the path of the source for the frame.
+         * @return Returns the path of the frame or nullptr if there is no source.
+         */
+        char const* path() const;
+
+        /**
+         * Gets the line number for the frame.
+         * @return Returns the line number for the frame.
+         */
+        size_t line() const;
 
         /**
          * Gets whether or not the frame is external (not Puppet).
@@ -58,46 +77,26 @@ namespace puppet { namespace compiler { namespace evaluation {
         bool external() const;
 
         /**
-         * Gets the expression related to the frame.
-         * @tparam The expression type (e.g. ast::function_expression, ast::class_expression, etc.).
-         * @return Returns the pointer to the requested expression or nullptr if the frame is not associated with an expression of the given type.
-         */
-        template <typename T>
-        T const* as() const
-        {
-            auto ptr = boost::get<T const*>(&_expression);
-            if (ptr) {
-                return *ptr;
-            }
-            return nullptr;
-        }
-
-        /**
          * Gets the scope of the stack frame.
          * @return Returns the scope of the stack frame.
          */
         std::shared_ptr<evaluation::scope> const& scope() const;
 
         /**
-         * Gets the current AST context (i.e. context of currently evaluating expression).
-         * @return Returns the current context.
+         * Sets the current AST context (i.e. context of currently evaluating expression) for the frame.
+         * @param context The new AST context.
          */
-        ast::context const& current() const;
-
-        /**
-         * Sets the current AST context (i.e. context of currently evaluating expression).
-         * @param value The new AST context.
-         */
-        void current(ast::context value);
+        void context(ast::context const& context);
 
      private:
         static ast::context expression_context(expression_type const& expression);
+        static boost::variant<char const*, std::string> expression_name(expression_type const& expression);
 
-        char const* _name;
-        expression_type _expression;
+        boost::variant<char const*, std::string> _name;
+        boost::variant<std::shared_ptr<std::string>, std::string> _path;
+        size_t _line = 0;
         std::shared_ptr<evaluation::scope> _scope;
-        ast::context _current;
-        bool _external;
+        bool _external = false;
     };
 
     /**

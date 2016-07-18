@@ -1,6 +1,7 @@
 #include <puppet/compiler/ast/visitors/validation.hpp>
 #include <puppet/compiler/ast/visitors/ineffective.hpp>
 #include <puppet/compiler/exceptions.hpp>
+#include <puppet/compiler/registry.hpp>
 #include <puppet/compiler/resource.hpp>
 #include <puppet/runtime/values/type.hpp>
 #include <puppet/utility/regex.hpp>
@@ -419,11 +420,13 @@ namespace puppet { namespace compiler { namespace ast { namespace visitors {
             throw parse_exception("type aliases can only be defined at top-level.", context.begin, context.end);
         }
 
-        if (statement.alias.name.empty() || boost::starts_with(statement.alias.name, "::")) {
+        auto name = statement.alias.name;
+        if (name.empty() || boost::starts_with(name, "::")) {
             throw parse_exception((boost::format("'%1%' is not a valid name for a type alias.") % statement.alias).str(), statement.alias.begin, statement.alias.end);
         }
 
-        if (runtime::values::type::find(statement.alias.name)) {
+        registry::normalize(name);
+        if (runtime::values::type::find(name)) {
             throw parse_exception(
                 (boost::format("type alias '%1%' conflicts with a built-in type of the same name.") %
                  statement.alias

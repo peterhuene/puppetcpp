@@ -1,6 +1,7 @@
 #include <puppet/compiler/node.hpp>
 #include <puppet/compiler/exceptions.hpp>
 #include <puppet/compiler/evaluation/context.hpp>
+#include <puppet/compiler/evaluation/evaluator.hpp>
 #include <puppet/cast.hpp>
 #include <boost/algorithm/string.hpp>
 
@@ -55,6 +56,8 @@ namespace puppet { namespace compiler {
 
     catalog node::compile(vector<string> const& manifests)
     {
+        auto& logger = _logger;
+
         try {
             // Create the catalog and evaluation context
             compiler::catalog catalog{ name(), _environment->name() };
@@ -62,8 +65,55 @@ namespace puppet { namespace compiler {
 
             // TODO: set node parameters in the top scope
 
-            // Compile the associated environment
-            _environment->compile(context, manifests);
+            // Import the initial manifests into the environment
+            vector<shared_ptr<ast::syntax_tree>> trees;
+            if (manifests.empty()) {
+                trees = _environment->import_initial_manifests(_logger);
+            } else {
+                // Set the finder to treat the manifests base as the manifest itself
+                // This handles recursively searching for manifests if a directory
+                compiler::settings temp;
+                temp.set(settings::manifest, ".");
+
+                for (auto& manifest : manifests) {
+                    compiler::finder finder{ manifest, &temp };
+                    finder.each_file(find_type::manifest, [&](auto const& manifest) {
+                        trees.emplace_back(_environment->import_manifest(logger, manifest));
+                        return true;
+                    });
+                }
+            }
+
+            {
+                // Create the 'main' stack frame
+                evaluation::scoped_stack_frame frame{ context, evaluation::stack_frame{ "<class main>", context.top_scope(), false }};
+                evaluation::evaluator evaluator{ context };
+
+                // Now evaluate the parsed syntax trees
+                for (auto const& tree : trees) {
+                    LOG(debug, "evaluating the syntax tree for '%1%'.", tree->path());
+                    evaluator.evaluate(*tree);
+                }
+            }
+
+            // Evaluate the node definition
+            node_definition const* definition = nullptr;
+            string resource_name;
+            tie(definition, resource_name) = _environment->find_node_definition(*this);
+            if (definition) {
+                auto resource = catalog.add(
+                    types::resource("node", rvalue_cast(resource_name)),
+                    catalog.find(types::resource("class", "main")),
+                    context.top_scope(),
+                    definition->statement());
+                if (!resource) {
+                    throw evaluation_exception("failed to add node resource.", context.backtrace());
+                }
+
+                LOG(debug, "evaluating node definition for node '%1%'.", name());
+                evaluation::node_evaluator evaluator{ context, definition->statement() };
+                evaluator.evaluate(*resource);
+            }
 
             // TODO: evaluate node classes
 
@@ -90,7 +140,7 @@ namespace puppet { namespace compiler {
 
     evaluation::context node::create_context(compiler::catalog& catalog)
     {
-        evaluation::context context { *this, catalog };
+        evaluation::context context{ *this, catalog };
 
         // Create Stage[main]
         auto main_stage = catalog.add(types::resource("stage", "main"));

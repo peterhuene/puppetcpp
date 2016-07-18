@@ -1,6 +1,7 @@
 #include <catch.hpp>
 #include <puppet/compiler/evaluation/repl.hpp>
 #include <puppet/cast.hpp>
+#include <boost/lexical_cast.hpp>
 
 using namespace std;
 using namespace puppet;
@@ -13,7 +14,7 @@ SCENARIO("using the repl evaluator", "[evaluation]")
     logging::console_logger logger;
 
     auto environment = compiler::environment::create(logger, settings);
-    environment->dispatcher().add_builtins();
+    environment->register_builtins();
     compiler::node node{ logger, "test", rvalue_cast(environment), nullptr };
     compiler::catalog catalog{ node.name(), node.environment().name() };
     auto context = node.create_context(catalog);
@@ -21,13 +22,7 @@ SCENARIO("using the repl evaluator", "[evaluation]")
     // Create the 'repl' stack frame
     evaluation::scoped_stack_frame frame{ context, evaluation::stack_frame{ "<repl>", context.top_scope(), false }};
 
-    boost::optional<compilation_exception> exception;
-    evaluation::repl repl{
-        context,
-        [&](compilation_exception const& ex) {
-            exception = ex;
-        }
-    };
+    evaluation::repl repl{ context };
 
     REQUIRE(repl.prompt() == "test:001:1> ");
     REQUIRE(repl.count() == 1);
@@ -38,11 +33,11 @@ SCENARIO("using the repl evaluator", "[evaluation]")
         THEN("it should evaluate to the expected value") {
             REQUIRE(result);
             REQUIRE(result->source == "1 + 1");
+            REQUIRE_FALSE(result->exception);
             REQUIRE(boost::lexical_cast<string>(result->value) == "2");
             REQUIRE(repl.prompt() == "test:002:1> ");
             REQUIRE(repl.count() == 2);
             REQUIRE(repl.line() == 1);
-            REQUIRE_FALSE(exception);
         }
     }
     WHEN("given a multiline statement") {
@@ -50,7 +45,6 @@ SCENARIO("using the repl evaluator", "[evaluation]")
             auto result = repl.evaluate("class foo");
             THEN("it should not yet be evaluated") {
                 REQUIRE_FALSE(result);
-                REQUIRE_FALSE(exception);
                 REQUIRE(repl.prompt() == "test:001:2> ");
                 REQUIRE(repl.count() == 1);
                 REQUIRE(repl.line() == 2);
@@ -59,7 +53,6 @@ SCENARIO("using the repl evaluator", "[evaluation]")
                 auto result = repl.evaluate("($param)");
                 THEN("it should not yet be evaluated") {
                     REQUIRE_FALSE(result);
-                    REQUIRE_FALSE(exception);
                     REQUIRE(repl.prompt() == "test:001:3> ");
                     REQUIRE(repl.count() == 1);
                     REQUIRE(repl.line() == 3);
@@ -68,7 +61,6 @@ SCENARIO("using the repl evaluator", "[evaluation]")
                     auto result = repl.evaluate("{");
                     THEN("it should not yet be evaluated") {
                         REQUIRE_FALSE(result);
-                        REQUIRE_FALSE(exception);
                         REQUIRE(repl.prompt() == "test:001:4> ");
                         REQUIRE(repl.count() == 1);
                         REQUIRE(repl.line() == 4);
@@ -77,7 +69,6 @@ SCENARIO("using the repl evaluator", "[evaluation]")
                         auto result = repl.evaluate("notice $param");
                         THEN("it should not yet be evaluated") {
                             REQUIRE_FALSE(result);
-                            REQUIRE_FALSE(exception);
                             REQUIRE(repl.prompt() == "test:001:5> ");
                             REQUIRE(repl.count() == 1);
                             REQUIRE(repl.line() == 5);
@@ -86,12 +77,12 @@ SCENARIO("using the repl evaluator", "[evaluation]")
                             auto result = repl.evaluate("}");
                             THEN("it should evaluate to the expected value") {
                                 REQUIRE(result);
+                                REQUIRE_FALSE(result->exception);
                                 REQUIRE(result->source == "class foo\n($param)\n{\nnotice $param\n}");
                                 REQUIRE(boost::lexical_cast<string>(result->value) == "");
                                 REQUIRE(repl.prompt() == "test:002:1> ");
                                 REQUIRE(repl.count() == 2);
                                 REQUIRE(repl.line() == 1);
-                                REQUIRE_FALSE(exception);
                             }
                         }
                     }
@@ -102,17 +93,18 @@ SCENARIO("using the repl evaluator", "[evaluation]")
     WHEN("given a command with a syntax error") {
         auto result = repl.evaluate("class foo bar {}");
         THEN("a compilation error should be provided") {
-            REQUIRE_FALSE(result);
+            REQUIRE(result);
+            REQUIRE(result->source == "class foo bar {}");
             REQUIRE(repl.prompt() == "test:002:1> ");
             REQUIRE(repl.count() == 2);
             REQUIRE(repl.line() == 1);
-            REQUIRE(exception);
-            REQUIRE(exception->what() == string{"syntax error: expected '{' but found name."});
-            REQUIRE(exception->path() == "<repl>");
-            REQUIRE(exception->line() == 1);
-            REQUIRE(exception->column() == 11);
-            REQUIRE(exception->length() == 3);
-            REQUIRE(exception->text() == "class foo bar {}");
+            REQUIRE(result->exception);
+            REQUIRE(result->exception->what() == string{"syntax error: expected '{' but found name."});
+            REQUIRE(result->exception->path() == "<repl>");
+            REQUIRE(result->exception->line() == 1);
+            REQUIRE(result->exception->column() == 11);
+            REQUIRE(result->exception->length() == 3);
+            REQUIRE(result->exception->text() == "class foo bar {}");
         }
     }
 }

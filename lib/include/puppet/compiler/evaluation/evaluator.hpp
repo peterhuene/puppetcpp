@@ -284,7 +284,7 @@ namespace puppet { namespace compiler { namespace evaluation {
         void evaluate(compiler::resource& resource) const;
 
      private:
-        static std::vector<ast::parameter> _none;
+        static std::vector<ast::parameter> const _none;
 
         ast::node_statement const& _statement;
     };

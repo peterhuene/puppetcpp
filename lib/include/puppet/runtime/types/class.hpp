@@ -19,15 +19,15 @@ namespace puppet { namespace runtime { namespace types {
     {
         /**
          * Constructs a Class type.
-         * @param title The title of the class (e.g. 'main').  If empty, represents all instances of the class type.
+         * @param name The name of the class (e.g. foo::bar).  If empty, represents all instances of the class type.
          */
-        explicit klass(std::string title = {});
+        explicit klass(std::string name = {});
 
         /**
-         * Gets the title of the class.
-         * @return Returns the title of the class.
+         * Gets the name of the class.
+         * @return Returns the name of the class.
          */
-        std::string const& title() const;
+        std::string const& class_name() const;
 
         /**
          * Determines if the class type is fully qualified.
@@ -71,18 +71,12 @@ namespace puppet { namespace runtime { namespace types {
         void write(std::ostream& stream, bool expand = true) const;
 
         /**
-         * Normalizes a class name.
-         * @param name The class name to normalize.
-         */
-        static void normalize(std::string& name);
-
-        /**
          * Stores a default shared instance used internally by other Puppet types.
          */
         static klass const instance;
 
      private:
-        std::string _title;
+        std::string _name;
     };
 
     /**

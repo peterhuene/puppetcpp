@@ -11,6 +11,7 @@
 #include <vector>
 #include <string>
 #include <exception>
+#include <memory>
 
 namespace puppet { namespace utility {
 

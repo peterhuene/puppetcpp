@@ -168,7 +168,7 @@ namespace puppet { namespace runtime { namespace types {
 
     boost::optional<resource> resource::parse(std::string const& specification)
     {
-        static utility::regex specification_regex{ R"(^((?:(?:::)?[A-Z]\w*)+)\[([^\]]+)\]$)" };
+        static utility::regex const specification_regex{ R"(^((?:(?:::)?[A-Z]\w*)+)\[([^\]]+)\]$)" };
 
         utility::regex::regions regions;
         if (!specification_regex.match(specification, &regions) || regions.count() != 3) {

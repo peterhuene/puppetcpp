@@ -7,6 +7,8 @@
 #include <puppet/utility/filesystem/helpers.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/algorithm/string.hpp>
+#include <grpc++/create_channel.h>
+#include <grpc++/security/credentials.h>
 #include <fstream>
 
 using namespace std;
@@ -63,6 +65,7 @@ namespace puppet { namespace options { namespace commands {
             (NODE_OPTION_FULL, po::value<string>(), NODE_DESCRIPTION)
             (NO_COLOR_OPTION, NO_COLOR_DESCRIPTION)
             (OUTPUT_OPTION_FULL, po::value<string>()->default_value("catalog.json"), OUTPUT_DESCRIPTION)
+            (RUBY_HOST_OPTION, po::value<string>(), RUBY_HOST_DESCRIPTION)
             (TRACE_OPTION, TRACE_DESCRIPTION)
             (VERBOSE_OPTION, VERBOSE_DESCRIPTION)
             ;
@@ -84,6 +87,7 @@ namespace puppet { namespace options { namespace commands {
         auto settings = create_settings(options);
         auto node_name = get_node(options, *facts);
         auto manifests = get_manifests(options);
+        auto ruby_host = get_ruby_host(options);
         bool trace = options.count(TRACE_OPTION) > 0;
 
         // Move the options into the lambda capture
@@ -97,6 +101,7 @@ namespace puppet { namespace options { namespace commands {
                 facts = rvalue_cast(facts),
                 output_file = rvalue_cast(output_file),
                 graph_file = rvalue_cast(graph_file),
+                ruby_host = rvalue_cast(ruby_host),
                 trace = trace,
                 this
             ] () {
@@ -105,14 +110,23 @@ namespace puppet { namespace options { namespace commands {
 
                 try {
                     logger.level(level);
+                    logger.trace(trace);
 
                     // TODO: support color/no-color options
 
                     LOG(debug, "using code directory '%1%'.", settings.get(settings::code_directory));
 
+                    shared_ptr<grpc::Channel> channel;
+                    if (ruby_host.empty()) {
+                        LOG(info, "no Ruby host specified: Ruby support is disabled.");
+                    } else {
+                        LOG(info, "using Ruby host at '%1%'.", ruby_host);
+                        channel = grpc::CreateChannel(ruby_host.c_str(), grpc::InsecureChannelCredentials());
+                    }
+
                     // Create a new environment with the builtin functions and operators
-                    auto environment = compiler::environment::create(logger, settings);
-                    environment->dispatcher().add_builtins();
+                    auto environment = compiler::environment::create(logger, settings, rvalue_cast(channel));
+                    environment->register_builtins();
 
                     // Construct a node
                     compiler::node node{logger, node_name, environment, facts};
@@ -152,17 +166,13 @@ namespace puppet { namespace options { namespace commands {
 
                     } catch (compilation_exception const& ex) {
                         LOG(error, ex.line(), ex.column(), ex.length(), ex.text(), ex.path(), "node '%1%': %2%", node.name(), ex.what());
-                        if (trace) {
-                            logger.log(ex.backtrace());
-                        }
+                        logger.log(ex.backtrace());
                     } catch (resource_cycle_exception const& ex) {
                         LOG(error, ex.what());
                     }
                 } catch (compilation_exception const& ex) {
                     LOG(error, ex.line(), ex.column(), ex.length(), ex.text(), ex.path(), ex.what());
-                    if (trace) {
-                        logger.log(ex.backtrace());
-                    }
+                    logger.log(ex.backtrace());
                 } catch (yaml_parse_exception const& ex) {
                     LOG(error, ex.line(), 1, ex.column(), ex.text(), ex.path(), ex.what());
                 } catch (exception const& ex) {
@@ -281,6 +291,14 @@ namespace puppet { namespace options { namespace commands {
         return {};
     }
 
+    string compile::get_ruby_host(po::variables_map const& options) const
+    {
+        if (options.count(RUBY_HOST_OPTION)) {
+            return options[RUBY_HOST_OPTION].as<string>();
+        }
+        return {};
+    }
+
     char const* const compile::FACTS_OPTION           = "facts";
     char const* const compile::FACTS_OPTION_FULL      = "facts,f";
     char const* const compile::FACTS_DESCRIPTION      = "The path to the YAML facts file to use. Defaults to the current system's facts.";
@@ -291,6 +309,8 @@ namespace puppet { namespace options { namespace commands {
     char const* const compile::NODE_OPTION_FULL       = "node,n";
     char const* const compile::NODE_DESCRIPTION       = "The node name to use. Defaults to the 'fqdn' fact.";
     char const* const compile::OUTPUT_DESCRIPTION     = "The output path for the compiled catalog.";
+    char const* const compile::RUBY_HOST_OPTION       = "ruby-host";
+    char const* const compile::RUBY_HOST_DESCRIPTION  = "The address or socket of the Ruby host to use. If not specified, Ruby support will be disabled.";
     char const* const compile::TRACE_OPTION           = "trace";
     char const* const compile::TRACE_DESCRIPTION      = "Display Puppet backtraces for evaluation errors.";
 

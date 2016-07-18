@@ -1,0 +1,37 @@
+/**
+ * @file
+ * Includes all Puppet functions.
+ */
+#pragma once
+
+#include "functions/alert.hpp"
+#include "functions/assert_type.hpp"
+#include "functions/contain.hpp"
+#include "functions/crit.hpp"
+#include "functions/debug.hpp"
+#include "functions/defined.hpp"
+#include "functions/each.hpp"
+#include "functions/emerg.hpp"
+#include "functions/epp.hpp"
+#include "functions/err.hpp"
+#include "functions/fail.hpp"
+#include "functions/file.hpp"
+#include "functions/filter.hpp"
+#include "functions/include.hpp"
+#include "functions/info.hpp"
+#include "functions/inline_epp.hpp"
+#include "functions/map.hpp"
+#include "functions/new.hpp"
+#include "functions/notice.hpp"
+#include "functions/realize.hpp"
+#include "functions/reduce.hpp"
+#include "functions/require.hpp"
+#include "functions/reverse_each.hpp"
+#include "functions/split.hpp"
+#include "functions/step.hpp"
+#include "functions/tag.hpp"
+#include "functions/tagged.hpp"
+#include "functions/type.hpp"
+#include "functions/versioncmp.hpp"
+#include "functions/warning.hpp"
+#include "functions/with.hpp"

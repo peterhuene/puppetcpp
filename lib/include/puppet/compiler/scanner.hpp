@@ -6,7 +6,7 @@
 
 #include "ast/ast.hpp"
 #include "registry.hpp"
-#include "evaluation/dispatcher.hpp"
+#include "../logging/logger.hpp"
 #include <vector>
 #include <string>
 #include <memory>
@@ -20,10 +20,12 @@ namespace puppet { namespace compiler {
     {
         /**
          * Constructs a definition scanner.
+         * Note: it is assumed the scanner is operating under the environment lock.
+         * @param logger The logger to use.
+         * @param environment The name of the environment.
          * @param registry The registry to populate with definitions.
-         * @param dispatcher The dispatcher to populate with definitions.
          */
-        scanner(compiler::registry& registry, evaluation::dispatcher& dispatcher);
+        scanner(logging::logger& logger, std::string const& environment, compiler::registry& registry);
 
         /**
          * Scans the given syntax tree for definitions.
@@ -45,9 +47,11 @@ namespace puppet { namespace compiler {
         void register_consumes(ast::consumes_statement const& statement);
         void register_application(ast::application_statement const& statement);
         void register_site(ast::site_statement const& statement);
+        void check_resource_type(std::string const& name, std::string const& normalized_name, ast::context const& context, char const* type);
 
+        logging::logger& _logger;
+        std::string const& _environment;
         registry& _registry;
-        evaluation::dispatcher& _dispatcher;
     };
 
 }}  // puppet::compiler

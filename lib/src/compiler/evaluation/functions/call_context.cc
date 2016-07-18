@@ -10,7 +10,8 @@ namespace puppet { namespace compiler { namespace evaluation { namespace functio
     call_context::call_context(evaluation::context& context, ast::function_call_expression const& expression) :
         _context(context),
         _name(expression.function),
-        _block(expression.lambda)
+        _block(expression.lambda),
+        _block_name(name_for_block(expression.function, expression.lambda))
     {
         // Capture the closure scope if there is a block
         if (_block) {
@@ -24,7 +25,8 @@ namespace puppet { namespace compiler { namespace evaluation { namespace functio
     call_context::call_context(evaluation::context& context, ast::function_call_statement const& statement) :
         _context(context),
         _name(statement.function),
-        _block(statement.lambda)
+        _block(statement.lambda),
+        _block_name(name_for_block(statement.function, statement.lambda))
     {
         // Capture the closure scope if there is a block
         if (_block) {
@@ -38,7 +40,8 @@ namespace puppet { namespace compiler { namespace evaluation { namespace functio
     call_context::call_context(evaluation::context& context, ast::method_call_expression const& expression, values::value& instance, ast::context const& instance_context, bool splat) :
         _context(context),
         _name(expression.method),
-        _block(expression.lambda)
+        _block(expression.lambda),
+        _block_name(name_for_block(expression.method, expression.lambda))
     {
         // Capture the closure scope if there is a block
         if (_block) {
@@ -64,7 +67,8 @@ namespace puppet { namespace compiler { namespace evaluation { namespace functio
     call_context::call_context(evaluation::context& context, ast::new_expression const& expression, ast::name const& name) :
         _context(context),
         _name(name),
-        _block(expression.lambda)
+        _block(expression.lambda),
+        _block_name(name_for_block(name, expression.lambda))
     {
         // Capture the closure scope if there is a block
         if (_block) {
@@ -135,7 +139,8 @@ namespace puppet { namespace compiler { namespace evaluation { namespace functio
         if (!_block) {
             return values::undef();
         }
-        function_evaluator evaluator{ _context, "<block>", _block->parameters, _block->body };
+
+        function_evaluator evaluator{ _context, _block_name.c_str(), _block->parameters, _block->body };
         return evaluator.evaluate(arguments, _closure_scope);
     }
 
@@ -160,6 +165,14 @@ namespace puppet { namespace compiler { namespace evaluation { namespace functio
 
         // Arguments have evaluated, set the current context to the function's name
         _context.current_context(_name);
+    }
+
+    string call_context::name_for_block(ast::name const& function, boost::optional<ast::lambda_expression> const& lambda)
+    {
+        if (!lambda) {
+            return string{};
+        }
+        return (boost::format("<block for %1%>") % function).str();
     }
 
 }}}}  // namespace puppet::compiler::evaluation::functions

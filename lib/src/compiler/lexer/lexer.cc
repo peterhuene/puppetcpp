@@ -207,21 +207,7 @@ namespace puppet { namespace compiler { namespace lexer {
 
     position get_last_position(string const& input)
     {
-        std::size_t offset = 0, line = 1;
-        std::size_t current_offset = 0, current_line = 1;
-        for (auto it = input.begin(); it != input.end(); ++it) {
-            if (*it == '\n') {
-                ++current_line;
-            }
-            ++current_offset;
-
-            // If not whitespace, point the last position to that location
-            if (!isspace(*it)) {
-                offset = current_offset;
-                line = current_line;
-            }
-        }
-        return position(offset, line);
+        return position(input.size(), count(input.begin(), input.end(), '\n'));
     }
 
     position get_last_position(boost::iterator_range<lexer_string_iterator> const& range)

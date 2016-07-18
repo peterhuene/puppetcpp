@@ -9,6 +9,9 @@ include_directories(
     ${Facter_INCLUDE_DIRS}
     ${RAPIDJSON_INCLUDE_DIRS}
     ${ICU_INCLUDE_DIRS}
+    ${PROTOBUF_INCLUDE_DIRS}
+    ${GRPC_INCLUDE_DIRS}
+    ${CMAKE_BINARY_DIR}/lib # For generated GRPC files
 )
 
 # Set common sources
@@ -83,7 +86,6 @@ set(PUPPET_COMMON_SOURCES
     src/compiler/evaluation/operators/unary/splat.cc
     src/compiler/evaluation/access_evaluator.cc
     src/compiler/evaluation/context.cc
-    src/compiler/evaluation/dispatcher.cc
     src/compiler/evaluation/evaluator.cc
     src/compiler/evaluation/postfix_evaluator.cc
     src/compiler/evaluation/repl.cc
@@ -171,6 +173,11 @@ elseif(WIN32)
     )
 endif()
 
+# Add proto file generation
+file(GLOB PROTOCOL_FILES ${PUPPET_RUBY_HOST_ROOT}/protocols/*.proto)
+protobuf_generate_cpp(PROTO_SOURCES PROTO_HEADERS ${PROTOCOL_FILES})
+protobuf_generate_grpc_cpp(PROTO_GRPC_SOURCES PROTO_GRPC_HEADERS ${PROTOCOL_FILES})
+
 # Add the executable for generating the static lexer
 add_executable(
     generate_static_lexer
@@ -180,29 +187,42 @@ add_executable(
     src/compiler/lexer/tokens.cc
     src/unicode/string.cc
     src/utility/regex.cc
+    ${PROTO_SOURCES}
+    ${PROTO_HEADERS}
+    ${PROTO_GRPC_SOURCES}
+    ${PROTO_GRPC_HEADERS}
 )
-target_link_libraries(generate_static_lexer ${Boost_LIBRARIES} ${Onigmo_LIBRARIES} ${ICU_LIBRARIES})
 
 # Add the command to generate the static lexer
+target_link_libraries(generate_static_lexer ${Boost_LIBRARIES} ${Onigmo_LIBRARIES} ${ICU_LIBRARIES} ${PROTOBUF_LIBRARIES} ${GRPC_LIBRARIES})
 add_custom_command(COMMAND generate_static_lexer DEPENDS generate_static_lexer WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/puppet/compiler/lexer OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/include/puppet/compiler/lexer/static_lexer.hpp)
-add_custom_target(generate_files ALL DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/include/puppet/compiler/lexer/static_lexer.hpp)
+add_custom_target(generate_headers DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/include/puppet/compiler/lexer/static_lexer.hpp)
 
-add_library(puppet SHARED ${PUPPET_COMMON_SOURCES} ${PUPPET_PLATFORM_SOURCES})
-add_dependencies(puppet generate_files)
+add_library(puppet SHARED
+    ${PUPPET_COMMON_SOURCES}
+    ${PUPPET_PLATFORM_SOURCES}
+    ${PROTO_SOURCES}
+    ${PROTO_HEADERS}
+    ${PROTO_GRPC_SOURCES}
+    ${PROTO_GRPC_HEADERS}
+)
+add_dependencies(puppet generate_headers)
 
 set_target_properties(puppet PROPERTIES VERSION "${LIBPUPPET_VERSION_MAJOR}.${LIBPUPPET_VERSION_MINOR}.${LIBPUPPET_VERSION_PATCH}")
 
 target_link_libraries(puppet
     ${Boost_LIBRARIES}
     ${Onigmo_LIBRARIES}
-    ${Facter_LIBRARY}
+    ${Facter_LIBRARIES}
     ${YAMLCPP_LIBRARIES}
     ${ICU_LIBRARIES}
+    ${PROTOBUF_LIBRARIES}
+    ${GRPC_LIBRARIES}
 )
 
 if (Editline_FOUND)
     include_directories(puppet ${Editline_INCLUDE_DIR})
-    target_link_libraries(puppet ${Editline_LIBRARY})
+    target_link_libraries(puppet ${Editline_LIBRARIES})
 endif()
 
 install(TARGETS puppet DESTINATION lib${LIB_SUFFIX})

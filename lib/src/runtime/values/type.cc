@@ -3,6 +3,7 @@
 #include <puppet/compiler/evaluation/evaluator.hpp>
 #include <puppet/compiler/exceptions.hpp>
 #include <boost/format.hpp>
+#include <boost/algorithm/string.hpp>
 
 using namespace std;
 using namespace puppet::compiler;
@@ -389,40 +390,52 @@ namespace puppet { namespace runtime { namespace values {
 
     type const* type::find(string const& name)
     {
-        static const unordered_map<string, type> puppet_types = {
-            { types::any::name(),           types::any() },
-            { types::array::name(),         types::array() },
-            { types::boolean::name(),       types::boolean() },
-            { types::callable::name(),      types::callable() },
-            { types::catalog_entry::name(), types::catalog_entry() },
-            { types::collection::name(),    types::collection() },
-            { types::data::name(),          types::data() },
-            { types::defaulted::name(),     types::defaulted() },
-            { types::enumeration::name(),   types::enumeration() },
-            { types::floating::name(),      types::floating() },
-            { types::hash::name(),          types::hash() },
-            { types::integer::name(),       types::integer() },
-            { types::iterable::name(),      types::iterable() },
-            { types::iterator::name(),      types::iterator() },
-            { types::klass::name(),         types::klass() },
-            { types::not_undef::name(),     types::not_undef() },
-            { types::numeric::name(),       types::numeric() },
-            { types::optional::name(),      types::optional() },
-            { types::pattern::name(),       types::pattern() },
-            { types::regexp::name(),        types::regexp() },
-            { types::resource::name(),      types::resource() },
-            { types::runtime::name(),       types::runtime() },
-            { types::scalar::name(),        types::scalar() },
-            { types::string::name(),        types::string() },
-            { types::structure::name(),     types::structure() },
-            { types::tuple::name(),         types::tuple() },
-            { types::type::name(),          types::type() },
-            { types::undef::name(),         types::undef() },
-            { types::variant::name(),       types::variant() },
-        };
+        static auto const create_types = []() {
+            vector<pair<string, type>> types;
+            types.emplace_back(types::any::name(),           types::any{});
+            types.emplace_back(types::array::name(),         types::array{});
+            types.emplace_back(types::boolean::name(),       types::boolean{});
+            types.emplace_back(types::callable::name(),      types::callable{});
+            types.emplace_back(types::catalog_entry::name(), types::catalog_entry{});
+            types.emplace_back(types::collection::name(),    types::collection{});
+            types.emplace_back(types::data::name(),          types::data{});
+            types.emplace_back(types::defaulted::name(),     types::defaulted{});
+            types.emplace_back(types::enumeration::name(),   types::enumeration{});
+            types.emplace_back(types::floating::name(),      types::floating{});
+            types.emplace_back(types::hash::name(),          types::hash{});
+            types.emplace_back(types::integer::name(),       types::integer{});
+            types.emplace_back(types::iterable::name(),      types::iterable{});
+            types.emplace_back(types::iterator::name(),      types::iterator{});
+            types.emplace_back(types::klass::name(),         types::klass{});
+            types.emplace_back(types::not_undef::name(),     types::not_undef{});
+            types.emplace_back(types::numeric::name(),       types::numeric{});
+            types.emplace_back(types::optional::name(),      types::optional{});
+            types.emplace_back(types::pattern::name(),       types::pattern{});
+            types.emplace_back(types::regexp::name(),        types::regexp{});
+            types.emplace_back(types::resource::name(),      types::resource{});
+            types.emplace_back(types::runtime::name(),       types::runtime{});
+            types.emplace_back(types::scalar::name(),        types::scalar{});
+            types.emplace_back(types::string::name(),        types::string{});
+            types.emplace_back(types::structure::name(),     types::structure{});
+            types.emplace_back(types::tuple::name(),         types::tuple{});
+            types.emplace_back(types::type::name(),          types::type{});
+            types.emplace_back(types::undef::name(),         types::undef{});
+            types.emplace_back(types::variant::name(),       types::variant{});
 
-        auto it = puppet_types.find(name);
-        return it == puppet_types.end() ? nullptr : &it->second;
+            // Store the names as lowercase; callers are expected to have already lowercased the name
+            for (auto& entry : types) {
+                boost::to_lower(entry.first);
+            }
+            return types;
+        };
+        static auto const puppet_types = create_types();
+
+        for (auto const& entry : puppet_types) {
+            if (entry.first == name) {
+                return &entry.second;
+            }
+        }
+        return nullptr;
     }
 
     boost::optional<type> type::create(ast::postfix_expression const& expression, compiler::evaluation::context* context)
@@ -430,7 +443,7 @@ namespace puppet { namespace runtime { namespace values {
         // Validate that the expression is a valid type specification
         expression.validate_type();
 
-        // Use an empty evaluation context if not given one (no node, catalog, registry, or dispatcher access)
+        // Use an empty evaluation context if not given one
         evaluation::context empty{};
         if (!context) {
             context = &empty;

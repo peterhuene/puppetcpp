@@ -115,12 +115,14 @@ namespace puppet { namespace compiler { namespace evaluation { namespace functio
 
     private:
         void evaluate_arguments(std::vector<ast::expression> const& arguments);
+        static std::string name_for_block(ast::name const& function, boost::optional<ast::lambda_expression> const& lambda);
 
         evaluation::context& _context;
         ast::name const& _name;
         runtime::values::array _arguments;
         std::vector<ast::context> _argument_contexts;
         boost::optional<ast::lambda_expression> const& _block;
+        std::string _block_name;
         std::shared_ptr<scope> _closure_scope;
     };
 

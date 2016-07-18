@@ -16,6 +16,7 @@
 #include "undef.hpp"
 #include "variable.hpp"
 #include "../../cast.hpp"
+#include <value.pb.h>
 #include <boost/variant.hpp>
 #include <boost/mpl/contains.hpp>
 #include <string>
@@ -79,6 +80,12 @@ namespace puppet { namespace runtime { namespace values {
          * Default constructor for value.
          */
         value() = default;
+
+        /**
+         * Constructs a value from a ruby host representation.
+         * @param value The ruby host representation value to convert.
+         */
+        explicit value(PuppetRubyHost::Protocols::Value const& value);
 
         /**
          * Constructs a value based on a variant type.
@@ -317,6 +324,12 @@ namespace puppet { namespace runtime { namespace values {
          * @return Returns the converted array.
          */
         array to_array(bool convert_hash = true);
+
+        /**
+         * Converts the value to a ruby host representation.
+         * @param value The ruby host representation to convert to.
+         */
+        void to_protocol_value(PuppetRubyHost::Protocols::Value& value) const;
 
         /**
          * Enumerates each "resource" type in the value.

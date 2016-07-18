@@ -5,6 +5,7 @@
 #include <puppet/compiler/evaluation/operators/binary/call_context.hpp>
 #include <puppet/compiler/evaluation/operators/unary/call_context.hpp>
 #include <puppet/compiler/exceptions.hpp>
+#include <boost/algorithm/string.hpp>
 
 using namespace std;
 using namespace puppet::compiler::ast;
@@ -176,18 +177,30 @@ namespace puppet { namespace compiler { namespace evaluation {
 
     value evaluator::operator()(ast::type const& expression)
     {
-        auto type = values::type::find(expression.name);
+        // TODO: remove once we add definitions for built-in types
+        if (types::resource::is_builtin(expression.name)) {
+            return types::resource(expression.name);
+        }
+
+        auto name = expression.name;
+        registry::normalize(name);
+
+        // Check Puppet types
+        auto type = values::type::find(name);
         if (type) {
             return *type;
         }
 
-        // TODO: check with the registry for defined resource types instead of this "builtin" function
-        if (types::resource::is_builtin(expression.name) || _context.find_defined_type(expression.name)) {
-            return types::resource(expression.name);
+        // Check type aliases
+        if (auto alias = _context.find_type_alias(name)) {
+            if (auto resolved = _context.resolve(alias)) {
+                return types::alias(alias->statement().alias.name, rvalue_cast(resolved));
+            }
         }
 
-        if (auto resolved = _context.resolve_type_alias(expression.name)) {
-            return types::alias(expression.name, rvalue_cast(resolved));
+        // Check resource and defined types
+        if (_context.find_resource_type(name, expression) || _context.find_defined_type(name)) {
+            return types::resource(rvalue_cast(name));
         }
 
         throw evaluation_exception(
@@ -337,11 +350,8 @@ namespace puppet { namespace compiler { namespace evaluation {
 
     value evaluator::operator()(function_call_expression const& expression)
     {
-        // Find the function before executing the call to ensure it is imported
-        _context.find_function(expression.function.value);
-
         functions::call_context context{ _context, expression };
-        return _context.dispatcher().dispatch(context);
+        return _context.dispatch(context);
     }
 
     value evaluator::operator()(new_expression const& expression)
@@ -355,7 +365,7 @@ namespace puppet { namespace compiler { namespace evaluation {
         name.value = "new";
 
         functions::call_context context{ _context, expression, name };
-        return _context.dispatcher().dispatch(context);
+        return _context.dispatch(context);
     }
 
     value evaluator::operator()(epp_render_expression const& expression)
@@ -400,7 +410,7 @@ namespace puppet { namespace compiler { namespace evaluation {
             operand,
             operand_context
         };
-        return _context.dispatcher().dispatch(context);
+        return _context.dispatch(context);
     }
 
     value evaluator::operator()(nested_expression const& expression)
@@ -476,11 +486,8 @@ namespace puppet { namespace compiler { namespace evaluation {
 
     value evaluator::operator()(function_call_statement const& statement)
     {
-        // Find the function before executing the call to ensure it is imported
-        _context.find_function(statement.function.value);
-
         functions::call_context context{ _context, statement };
-        return _context.dispatcher().dispatch(context);
+        return _context.dispatch(context);
     }
 
     value evaluator::operator()(relationship_statement const& statement)
@@ -492,7 +499,7 @@ namespace puppet { namespace compiler { namespace evaluation {
         }
 
         // Register the relationships
-        auto left = make_shared<value>(rvalue_cast(result));
+        auto left = std::make_shared<value>(rvalue_cast(result));
         auto left_context = statement.operand.context();
         for (auto const& operation : statement.operations) {
             compiler::relationship relationship;
@@ -517,7 +524,7 @@ namespace puppet { namespace compiler { namespace evaluation {
                     throw runtime_error("unsupported relationship operator.");
             }
 
-            auto right = make_shared<value>(operator()(operation.operand));
+            auto right = std::make_shared<value>(operator()(operation.operand));
             auto right_context = operation.operand.context();
             _context.add(resource_relationship{
                 relationship,
@@ -540,23 +547,23 @@ namespace puppet { namespace compiler { namespace evaluation {
 
     value evaluator::operator()(resource_declaration_expression const& expression)
     {
-        // Evaluate the type name
-        std::string type_name;
+        // Evaluate the type expression
         auto type_value = evaluate(expression.type);
 
-        // Resource expressions support either strings or Resource[Type] for the type name
-        bool is_class = false;
+        // Type expressions support either strings or Resource[Type] for the type name
+        std::string type_name;
         if (type_value.as<std::string>()) {
             type_name = type_value.move_as<std::string>();
-            is_class = type_name == "class";
         } else if (auto type = type_value.as<values::type>()) {
             if (auto resource = boost::get<types::resource>(type)) {
                 if (resource->title().empty()) {
                     type_name = resource->type_name();
-                    is_class = resource->is_class();
                 }
             }
         }
+
+        registry::normalize(type_name);
+        bool is_class = type_name == "class";
 
         // Ensure there was a valid type name
         if (type_name.empty()) {
@@ -743,7 +750,7 @@ namespace puppet { namespace compiler { namespace evaluation {
     value evaluator::operator()(collector_expression const& expression)
     {
         // Create and add a collector to the catalog
-        auto collector = make_shared<collectors::query_collector>(expression, _context.current_scope());
+        auto collector = std::make_shared<collectors::query_collector>(expression, _context.current_scope());
         _context.add(collector);
         return types::runtime(types::runtime::object_type(rvalue_cast(collector)));
     }
@@ -954,12 +961,14 @@ namespace puppet { namespace compiler { namespace evaluation {
 
         // Lookup a defined type if not a built-in or class
         defined_type const* definition = nullptr;
-        if (!is_class && !types::resource::is_builtin(types::resource{type_name}.type_name())) {
+
+        // TODO: remove "is_builtin" check when defined as resource types
+        if (!is_class && !types::resource::is_builtin(types::resource{type_name}.type_name()) && !_context.find_resource_type(type_name, expression.type.context())) {
             definition = _context.find_defined_type(type_name);
             if (!definition) {
                 throw evaluation_exception(
-                    (boost::format("type '%1%' has not been defined.") %
-                     type_name
+                    (boost::format("resource type '%1%' has not been defined.") %
+                     types::resource{ type_name }.type_name()
                     ).str(),
                     expression.type.context(),
                     _context.backtrace()
@@ -990,11 +999,6 @@ namespace puppet { namespace compiler { namespace evaluation {
             if (!title.move_as<std::string>([&](std::string resource_title) {
                 if (resource_title.empty()) {
                     throw evaluation_exception("resource title cannot be empty.", body.context(), _context.backtrace());
-                }
-
-                if (is_class) {
-                    // Format the title based on the Class type.
-                    types::klass::normalize(resource_title);
                 }
 
                 // Add the resource to the catalog
@@ -1084,7 +1088,6 @@ namespace puppet { namespace compiler { namespace evaluation {
             unsigned int next = current + (is_right_associative(operation.operator_) ? 0 : 1);
             auto rhs = climb_expression(operation.operand, next, begin, end);
 
-            // Dispatch the operator "call"
             binary::call_context context{
                 _context,
                 operation.operator_,
@@ -1098,7 +1101,9 @@ namespace puppet { namespace compiler { namespace evaluation {
                 rhs.first,
                 rhs.second
             };
-            lhs.first = _context.dispatcher().dispatch(context);
+
+            // Dispatch the operator "call"
+            lhs.first = _context.dispatch(context);
             lhs.second.end = rhs.second.end;
         }
         return lhs;
@@ -1226,7 +1231,7 @@ namespace puppet { namespace compiler { namespace evaluation {
         // Create a new scope and stack frame
         auto scope = make_shared<evaluation::scope>(parent ? parent : _context.top_scope());
         scoped_stack_frame frame = _name ?
-            scoped_stack_frame{ _context, stack_frame{ _name, scope } } :
+            scoped_stack_frame{ _context, stack_frame{ _name, scope, false } } :
             scoped_stack_frame{ _context, stack_frame{ _statement, scope } };
 
         for (size_t i = 0; i < _parameters.size(); ++i) {
@@ -1297,7 +1302,7 @@ namespace puppet { namespace compiler { namespace evaluation {
         // Create a new scope and stack frame
         auto scope = make_shared<evaluation::scope>(parent ? parent : _context.top_scope());
         scoped_stack_frame frame = _name ?
-           scoped_stack_frame{ _context, stack_frame{ _name, scope } } :
+           scoped_stack_frame{ _context, stack_frame{ _name, scope, false } } :
            scoped_stack_frame{ _context, stack_frame{ _statement, scope } };
 
         // Set any default parameters that do not have arguments
@@ -1585,6 +1590,6 @@ namespace puppet { namespace compiler { namespace evaluation {
         evaluate_body(_context, _body);
     }
 
-    vector<parameter> node_evaluator::_none;
+    vector<parameter> const node_evaluator::_none;
 
 }}}  // namespace puppet::compiler::evaluation

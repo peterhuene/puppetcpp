@@ -30,4 +30,5 @@ RUN apk add --no-cache make cmake gcc g++ boost-dev boost-program_options curl-d
     make install && \
     cd && \
     rm -rf /tmp/facter && \
+    git clone --recursive https://github.com/peterhuene/puppet-ruby-host.git /tmp/puppet-ruby-host && \
     mkdir -p /etc/puppetlabs/code/environments/production

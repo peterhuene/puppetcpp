@@ -295,18 +295,6 @@ namespace puppet { namespace compiler { namespace evaluation {
         compiler::catalog& catalog() const;
 
         /**
-         * Gets the type registry.
-         * @return Returns the type registry.
-         */
-        compiler::registry const& registry() const;
-
-        /**
-         * Gets the function dispatcher.
-         * @return Returns the function dispatcher.
-         */
-        evaluation::dispatcher const& dispatcher() const;
-
-        /**
          * Gets the current scope.
          * @return Returns the current scope and will never return nullptr.
          */
@@ -345,7 +333,7 @@ namespace puppet { namespace compiler { namespace evaluation {
 
         /**
          * Finds a scope by name.
-         * @param name The name of the scope to find.
+         * @param name The name of the scope to find (e.g. foo::bar).
          * @return Returns a pointer to the scope if found or nullptr if the scope is not found.
          */
         std::shared_ptr<scope> find_scope(std::string const& name) const;
@@ -374,15 +362,29 @@ namespace puppet { namespace compiler { namespace evaluation {
 
         /**
          * Gets the current Puppet backtrace from the context.
+         * @param count The number of frames to include in the backtrace.
          * @return Returns the current Puppet backtrace from the context.
          */
-        std::vector<stack_frame> backtrace() const;
+        std::vector<stack_frame> backtrace(size_t count = std::numeric_limits<size_t>::max()) const;
+
+        /**
+         * Appends the current Puppet backtrace to the given backtrace.
+         * @param backtrace The backtrace to append to.
+         * @param count The count of frames to append.
+         */
+        void append_backtrace(std::vector<stack_frame>& backtrace, size_t count = std::numeric_limits<size_t>::max()) const;
+
+        /**
+         * Gets the size (number of frames) of the current Puppet call stack.
+         * @return Returns the size (number of frames) of the current Puppet call stack.
+         */
+        size_t call_stack_size() const;
 
         /**
          * Sets the current stack frame's AST context.
          * @param context The current AST context.
          */
-        void current_context(ast::context context);
+        void current_context(ast::context const& context);
 
         /**
          * Writes the given value to the output stream.
@@ -416,68 +418,48 @@ namespace puppet { namespace compiler { namespace evaluation {
         compiler::resource* declare_class(std::string name, ast::context const& context);
 
         /**
-         * Finds a class definition by name.
-         * @param name The name of the class to find (e.g. foo::bar).
-         * @param import Specifies whether or not an attempt to import the class should be made.
+         * Finds a class definition by normalized name.
+         * @param name The normalized name of the class to find (e.g. foo::bar).
          * @return Returns the class definition or nullptr if the class is not defined.
          */
-        klass const* find_class(std::string name, bool import = true);
+        klass const* find_class(std::string const& name);
 
         /**
-         * Finds a defined type definition by name.
-         * @param name The name of the defined type to find (e.g. foo::bar).
-         * @param import Specifies whether or not an attempt to import the defined type should be made.
+         * Finds a defined type definition by normalized name.
+         * @param name The normalized name of the defined type to find (e.g. foo::bar).
          * @return Returns the defined type or nullptr if the defined type is not defined.
          */
-        compiler::defined_type const* find_defined_type(std::string name, bool import = true);
+        compiler::defined_type const* find_defined_type(std::string const& name);
 
         /**
          * Finds a function by name.
          * @param name The name of the function to find (e.g. foo::bar).
-         * @param import Specifies whether or not an attempt to import the function should be made.
+         * @param context The AST context of where the resource type is being imported if not currently imported.
          * @return Returns the function descriptor or nullptr if not found.
          */
-        functions::descriptor* find_function(std::string const& name, bool import = true);
+        functions::descriptor const* find_function(std::string const& name, ast::context const& context);
 
         /**
-         * Finds a function by name.
-         * @param name The name of the function to find (e.g. foo::bar).
-         * @param import Specifies whether or not an attempt to import the function should be made.
-         * @return Returns the function descriptor or nullptr if not found.
-         */
-        functions::descriptor const* find_function(std::string const& name, bool import = true) const;
-
-        /**
-         * Finds a type alias by name.
-         * @param name The name of the type alias to find (e.g. 'Foo::Bar').
-         * @param import Specifies whether or not an attempt to import the type alias should be made.
+         * Finds a type alias by normalized name.
+         * @param name The normalized name of the type alias to find (e.g. foo::bar).
          * @return Returns the type alias or nullptr if not found.
          */
-        compiler::type_alias* find_type_alias(std::string const& name, bool import = true);
+        compiler::type_alias const* find_type_alias(std::string const& name);
 
         /**
-         * Finds a type alias by name.
-         * @param name The name of the type alias to find (e.g. 'Foo::Bar').
-         * @param import Specifies whether or not an attempt to import the type alias should be made.
-         * @return Returns the type alias or nullptr if not found.
+         * Finds a resource type by normalized name.
+         * @param name The normalized name of the resource type (e.g. foo::bar).
+         * @param context The AST context of where the resource type is being imported if not currently imported.
+         * @return Returns the resource type or nullptr if not found.
          */
-        compiler::type_alias const* find_type_alias(std::string const& name, bool import = true) const;
+        resource_type const* find_resource_type(std::string const& name, ast::context const& context);
 
         /**
-         * Resolves a type alias by name.
-         * @param name The name of the type alias to resolve.
-         * @return Returns a shared pointer to the resolved type or nullptr if the alias does not exist.
+         * Resolves a type alias.
+         * @param alias The type alias to resolve.
+         * @return Returns a shared pointer to the resolved type.
          */
-        std::shared_ptr<runtime::values::type> resolve_type_alias(std::string const& name);
-
-        /**
-         * Determines if the given name is defined.
-         * @param name The name to check.
-         * @param check_classes True if classes should be checked or false if not.
-         * @param checked_defined_types True if defined types should be checked or false if not.
-         * @return Returns true if the name is defined or false i fnot.
-         */
-        bool is_defined(std::string name, bool check_classes = true, bool checked_defined_types = true);
+        std::shared_ptr<runtime::values::type> resolve(type_alias const* alias);
 
         /**
          * Adds a resource relationship to the evaluation context.
@@ -508,6 +490,27 @@ namespace puppet { namespace compiler { namespace evaluation {
         void add(std::shared_ptr<collectors::collector> collector);
 
         /**
+         * Dispatches a function call.
+         * @param context The function call context to dispatch.
+         * @return Returns the value returned by the called function.
+         */
+        runtime::values::value dispatch(functions::call_context& context);
+
+        /**
+         * Dispatches a binary operator call.
+         * @param context The binary operator call context to dispatch.
+         * @return Returns the value returned by the called operator.
+         */
+        runtime::values::value dispatch(operators::binary::call_context& context);
+
+        /**
+         * Dispatches a unary operator call.
+         * @param context The unary operator call context to dispatch.
+         * @return Returns the value returned by the called operator.
+         */
+        runtime::values::value dispatch(operators::unary::call_context& context);
+
+        /**
          * Evaluates any existing resource overrides for the given resource.
          * @param resource The resource to evaluate any existing resource overrides for.
          */
@@ -525,14 +528,12 @@ namespace puppet { namespace compiler { namespace evaluation {
         friend struct scoped_output_stream;
         friend struct scoped_stack_frame;
 
-        context(context&) = delete;
-        context& operator=(context&) = delete;
+        context(context const&) = delete;
+        context& operator=(context const&) = delete;
         void evaluate_defined_types(size_t& index, std::vector<declared_defined_type*>& virtualized);
 
         compiler::node* _node;
         compiler::catalog* _catalog;
-        compiler::registry const* _registry;
-        evaluation::dispatcher const* _dispatcher;
 
         std::vector<stack_frame> _call_stack;
         std::shared_ptr<scope> _top_scope;
@@ -545,7 +546,7 @@ namespace puppet { namespace compiler { namespace evaluation {
         std::vector<resource_relationship> _relationships;
         std::vector<std::shared_ptr<collectors::collector>> _collectors;
         std::vector<std::ostream*> _stream_stack;
-        std::unordered_map<std::string, std::shared_ptr<runtime::values::type>> _resolved_type_aliases;
+        std::unordered_map<type_alias const*, std::shared_ptr<runtime::values::type>> _resolved_type_aliases;
     };
 
 }}}  // namespace puppet::compiler::evaluation

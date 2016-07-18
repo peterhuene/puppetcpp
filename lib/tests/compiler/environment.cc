@@ -115,37 +115,29 @@ SCENARIO("environment with configuration file", "[environment]")
     REQUIRE(manifests[0] == (environment_dir / "site.pp").string());
 }
 
-void import(puppet::logging::logger& logger, puppet::compiler::environment& environment, find_type type, string const& name, bool expected = true)
+void import(puppet::logging::logger& logger, puppet::compiler::environment& environment, find_type type, string name, bool expected = true)
 {
     CAPTURE(name);
 
     if (type == find_type::function) {
-        REQUIRE_FALSE(environment.dispatcher().find(name));
-    } else if (type == find_type::type) {
-        REQUIRE_FALSE(environment.registry().find_type_alias(name));
-    } else {
-        REQUIRE_FALSE((environment.registry().find_class(name) || environment.registry().find_defined_type(name)));
-    }
-
-    environment.import(logger, type, name);
-
-    if (type == find_type::function) {
-        auto function = environment.dispatcher().find(name);
+        auto function = environment.find_function(logger, name, ast::context{});
         if (expected) {
             REQUIRE(function);
         } else {
             REQUIRE_FALSE(function);
         }
     } else if (type == find_type::type) {
-        auto alias = environment.registry().find_type_alias(name);
+        registry::normalize(name);
+        auto alias = environment.find_type_alias(logger, name);
         if (expected) {
             REQUIRE(alias);
         } else {
             REQUIRE_FALSE(alias);
         }
     } else {
-        auto klass = environment.registry().find_class(name);
-        auto defined_type = environment.registry().find_defined_type(name);
+        registry::normalize(name);
+        auto klass = environment.find_class(logger, name);
+        auto defined_type = environment.find_defined_type(logger, name);
         if (expected) {
             REQUIRE((klass || defined_type));
         } else {

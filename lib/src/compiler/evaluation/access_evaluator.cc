@@ -843,7 +843,7 @@ namespace puppet { namespace compiler { namespace evaluation {
         {
             // If the type is fully qualified, then this is an attribute access
             if (target.fully_qualified()) {
-                return access_resource(types::resource("class", target.title()));
+                return access_resource(types::resource("class", target.class_name()));
             }
 
             // If there is only one string parameter, return a single class

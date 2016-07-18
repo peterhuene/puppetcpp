@@ -1,4 +1,5 @@
 #include <puppet/runtime/values/value.hpp>
+#include <puppet/compiler/registry.hpp>
 #include <puppet/cast.hpp>
 #include <boost/functional/hash.hpp>
 #include <boost/algorithm/string.hpp>
@@ -9,20 +10,20 @@ namespace puppet { namespace runtime { namespace types {
 
     klass const klass::instance;
 
-    klass::klass(std::string title) :
-        _title(rvalue_cast(title))
+    klass::klass(std::string name) :
+        _name(rvalue_cast(name))
     {
-        normalize(_title);
+        compiler::registry::normalize(_name);
     }
 
-    std::string const& klass::title() const
+    std::string const& klass::class_name() const
     {
-        return _title;
+        return _name;
     }
 
     bool klass::fully_qualified() const
     {
-        return !_title.empty();
+        return !_name.empty();
     }
 
     char const* klass::name()
@@ -45,7 +46,7 @@ namespace puppet { namespace runtime { namespace types {
         if (!class_ptr) {
             return false;
         }
-        return _title.empty() || _title == class_ptr->title();
+        return _name.empty() || _name == class_ptr->class_name();
     }
 
     bool klass::is_assignable(values::type const& other, recursion_guard& guard) const
@@ -54,33 +55,16 @@ namespace puppet { namespace runtime { namespace types {
         if (!ptr) {
             return false;
         }
-        return _title.empty() || _title == ptr->title();
+        return _name.empty() || _name == ptr->class_name();
     }
 
     void klass::write(ostream& stream, bool expand) const
     {
         stream << klass::name();
-        if (_title.empty()) {
+        if (_name.empty()) {
             return;
         }
-        stream << "[" << _title << "]";
-    }
-
-    void klass::normalize(std::string& name)
-    {
-        if (boost::starts_with(name, "::")) {
-            name = name.substr(2);
-        }
-
-        // Now lowercase every start of a type name
-        boost::split_iterator<std::string::iterator> end;
-        for (auto it = boost::make_split_iterator(name, boost::first_finder("::", boost::is_equal())); it != end; ++it) {
-            if (!*it) {
-                continue;
-            }
-            auto range = boost::make_iterator_range(it->begin(), it->begin() + 1);
-            boost::to_lower(range);
-        }
+        stream << "[" << _name << "]";
     }
 
     ostream& operator<<(ostream& os, klass const& type)
@@ -91,7 +75,7 @@ namespace puppet { namespace runtime { namespace types {
 
     bool operator==(klass const& left, klass const& right)
     {
-        return left.title() == right.title();
+        return left.class_name() == right.class_name();
     }
 
     bool operator!=(klass const& left, klass const& right)
@@ -105,7 +89,7 @@ namespace puppet { namespace runtime { namespace types {
 
         size_t seed = 0;
         boost::hash_combine(seed, name_hash);
-        boost::hash_combine(seed, type.title());
+        boost::hash_combine(seed, type.class_name());
         return seed;
     }
 

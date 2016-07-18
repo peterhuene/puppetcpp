@@ -3,24 +3,128 @@
 #include <puppet/compiler/evaluation/evaluator.hpp>
 #include <puppet/compiler/exceptions.hpp>
 #include <boost/format.hpp>
+#include <sstream>
 
 using namespace std;
 using namespace puppet::runtime;
+using namespace PuppetRubyHost;
+using namespace PuppetRubyHost::Protocols;
 
 namespace puppet { namespace compiler { namespace evaluation { namespace functions {
 
-    descriptor::descriptor(string name, ast::function_statement const* statement) :
+    descriptor::descriptor(string name, ast::function_statement const* statement, bool omit_frame) :
         _name(rvalue_cast(name)),
-        _statement(statement)
+        _statement(statement),
+        _omit_frame(omit_frame)
     {
         if (_statement && _statement->tree) {
             _tree = _statement->tree->shared_from_this();
         }
     }
 
+    descriptor::descriptor(Protocols::Function::Stub& service, string const& environment, DescribeFunctionResponse::Function const& function) :
+        _name(function.name()),
+        _statement(nullptr),
+        _file(function.file()),
+        _line(function.line()),
+        _omit_frame(true)
+    {
+        // Add the dispatches
+        for (auto const& dispatch : function.dispatches()) {
+            string id = dispatch.id();
+
+            if (dispatch.types_size() != dispatch.names_size()) {
+                throw compilation_exception(
+                    (boost::format("unexpected mismatch between count of types and names when describing function '%1%'.") %
+                     function.name()
+                    ).str(),
+                    function.file()
+                );
+            }
+
+            types::callable signature;
+            vector<unique_ptr<values::type>> types;
+            unique_ptr<values::type> block;
+
+            // Parse the parameter types
+            auto types_count = dispatch.types_size();
+            for (int i = 0; i < types_count; ++i) {
+                auto& type = dispatch.types(i);
+                auto& name = dispatch.names(i);
+
+                auto parsed = values::type::parse(type);
+                if (!parsed) {
+                    throw compilation_exception(
+                        (boost::format("parameter '%1%' for dispatch '%2%' has invalid type '%3%'.") %
+                         name %
+                         dispatch.name() %
+                         type
+                        ).str(),
+                        function.file()
+                    );
+                }
+                types.emplace_back(make_unique<values::type>(rvalue_cast(*parsed)));
+            }
+
+            // Parse the block type
+            auto& block_type = dispatch.block_type();
+            if (!block_type.empty()) {
+                auto parsed = values::type::parse(block_type);
+                if (!parsed) {
+                    throw compilation_exception(
+                        (boost::format("block parameter '%1%' for dispatch '%2%' has invalid type '%3%'.") %
+                         dispatch.block_name() %
+                         dispatch.name() %
+                         block_type
+                        ).str(),
+                        function.file()
+                    );
+                }
+                block = make_unique<values::type>(rvalue_cast(*parsed));
+            }
+
+            // Add the dispatch
+            add(types::callable{
+                    rvalue_cast(types),
+                    dispatch.min(),
+                    dispatch.max() < 0 ? numeric_limits<int64_t>::max() : dispatch.max(),
+                    rvalue_cast(block)
+                },
+                [&, environment, id = rvalue_cast(id)](call_context& context) {
+                    return descriptor::dispatch(service, environment, id, context);
+                }
+            );
+        }
+
+        if (!dispatchable()) {
+            throw compilation_exception(
+                (boost::format("cannot import function '%1%' because there are no available dispatches.") %
+                 function.name()
+                ).str(),
+                function.file()
+            );
+        }
+    }
+
     string const& descriptor::name() const
     {
         return _name;
+    }
+
+    string const& descriptor::file() const
+    {
+        if (_statement) {
+            return _statement->tree->path();
+        }
+        return _file;
+    }
+
+    size_t descriptor::line() const
+    {
+        if (_statement) {
+            return _statement->begin.line();
+        }
+        return _line;
     }
 
     ast::function_statement const* descriptor::statement() const
@@ -37,11 +141,16 @@ namespace puppet { namespace compiler { namespace evaluation { namespace functio
     {
         auto callable = values::type::parse_as<types::callable>(signature);
         if (!callable) {
-            throw runtime_error((boost::format("function '%1%' cannot add an overload with invalid signature '%2%'.") % _name % signature).str());
+            throw runtime_error((boost::format("function '%1%' cannot add a dispatch with invalid signature '%2%'.") % _name % signature).str());
         }
 
+        add(rvalue_cast(*callable), rvalue_cast(callback));
+    }
+
+    void descriptor::add(types::callable signature, callback_type callback)
+    {
         dispatch_descriptor descriptor;
-        descriptor.signature = rvalue_cast(*callable);
+        descriptor.signature = rvalue_cast(signature);
         descriptor.callback = rvalue_cast(callback);
         _dispatch_descriptors.emplace_back(rvalue_cast(descriptor));
     }
@@ -90,6 +199,10 @@ namespace puppet { namespace compiler { namespace evaluation { namespace functio
         // TODO: in the future, this should dispatch to the most specific overload rather than the first dispatchable overload
         for (auto& descriptor : _dispatch_descriptors) {
             if (descriptor.signature.can_dispatch(context)) {
+                if (_omit_frame) {
+                    // Don't push a new stack frame
+                    return descriptor.callback(context);
+                }
                 scoped_stack_frame frame{
                     evaluation_context,
                     stack_frame{
@@ -325,6 +438,166 @@ namespace puppet { namespace compiler { namespace evaluation { namespace functio
             context.argument_context(min_argument_mismatch),
             evaluation_context.backtrace()
         );
+    }
+
+    values::value descriptor::dispatch(Protocols::Function::Stub& service, string const& environment, string const& id, call_context& context)
+    {
+        grpc::ClientContext client_context;
+
+        InvokeFunctionRequest request;
+        auto call = request.mutable_call();
+        call->set_environment(environment);
+        call->set_id(id);
+        call->set_has_block(static_cast<bool>(context.block()));
+
+        for (auto const& argument : context.arguments()) {
+            auto call_argument = call->add_arguments();
+            argument->to_protocol_value(*call_argument);
+        }
+
+        auto stream = service.Invoke(&client_context);
+        if (!stream->Write(request)) {
+            throw evaluation_exception(
+                "connection lost to Ruby host process.",
+                ast::context{},
+                context.context().backtrace()
+            );
+        }
+
+        boost::optional<values::value> result;
+        InvokeFunctionResponse response;
+        while (stream->Read(&response)) {
+            // Check for a result
+            if (response.has_result()) {
+                result = values::value{ response.result() };
+                break;
+            }
+            // Check for an exception
+            if (response.has_exception()) {
+                // Raise an evaluation exception with a merged trace
+                auto const& exception = response.exception();
+                vector<stack_frame> backtrace;
+                for (auto const& frame : exception.backtrace()) {
+                    backtrace.emplace_back(frame);
+                }
+                context.context().append_backtrace(backtrace);
+
+                shared_ptr<ast::syntax_tree> tree;
+                ast::context ast_context = context.name();
+                if (exception.has_context()) {
+                    auto const& remote_context = exception.context();
+
+                    tree = ast::syntax_tree::create(remote_context.file());
+                    ast_context.tree = tree.get();
+
+                    auto& begin = remote_context.begin();
+                    ast_context.begin = lexer::position{ static_cast<size_t>(begin.offset()), static_cast<size_t>(begin.line()) };
+                    auto& end = remote_context.end();
+                    ast_context.end = lexer::position{ static_cast<size_t>(end.offset()), static_cast<size_t>(end.line()) };
+                }
+                throw evaluation_exception(exception.message(), ast_context, rvalue_cast(backtrace));
+            }
+            // Check for a yield
+            if (response.has_yield()) {
+                size_t stack_depth = context.context().call_stack_size();
+
+                auto& yield = response.yield();
+
+                // Perform the yield and respond with a continuation request
+                InvokeFunctionRequest yield_request;
+                auto continuation = yield_request.mutable_continuation();
+
+                try {
+                    // Convert the yield arguments
+                    values::array yield_arguments;
+                    for (auto const& argument : yield.arguments()) {
+                        yield_arguments.emplace_back(argument);
+                    }
+
+                    // Perform the yield
+                    context.yield(yield_arguments).to_protocol_value(*continuation->mutable_result());
+                } catch (evaluation_exception const& ex) {
+                    auto exception = continuation->mutable_exception();
+                    exception->set_message(ex.what());
+
+                    // Copy the relevant frames to the exception response
+                    size_t count = ex.backtrace().size() > stack_depth ? ex.backtrace().size() - stack_depth : 0;
+                    for (size_t i = 0; i < count; ++i) {
+                        auto current = ex.backtrace()[i];
+                        auto frame = exception->add_backtrace();
+                        frame->set_name(current.name());
+                        if (current.path()) {
+                            frame->set_file(current.path());
+                            frame->set_line(current.line());
+                        }
+                    }
+
+                    // Emit context when we have source file information
+                    auto& ast_context = ex.context();
+                    if (ast_context.tree && ast_context.tree->source().empty()) {
+                        auto context = exception->mutable_context();
+                        context->set_file(ast_context.tree->path());
+                        auto begin = context->mutable_begin();
+                        begin->set_line(ast_context.begin.line());
+                        begin->set_offset(ast_context.begin.offset());
+                        auto end = context->mutable_end();
+                        end->set_line(ast_context.end.line());
+                        end->set_offset(ast_context.end.offset());
+                    }
+                } catch (exception const& ex) {
+                    auto exception = continuation->mutable_exception();
+                    exception->set_message(ex.what());
+                    if (context.context().call_stack_size() > stack_depth) {
+                        auto backtrace = context.context().backtrace(context.context().call_stack_size() - stack_depth);
+                        for (auto const& frame : backtrace) {
+                            auto f = exception->add_backtrace();
+                            f->set_name(frame.name());
+                            if (frame.path()) {
+                                f->set_file(frame.path());
+                                f->set_line(frame.line());
+                            }
+                        }
+                    }
+                }
+                if (!stream->Write(yield_request)) {
+                    throw evaluation_exception(
+                        "connection lost to Ruby host process.",
+                        context.name(),
+                        context.context().backtrace()
+                    );
+                }
+                continue;
+            }
+            break;
+        }
+
+        // Finish the request
+        stream->WritesDone();
+        auto status = stream->Finish();
+        if (!status.ok()) {
+            if (status.error_code() == grpc::UNAVAILABLE) {
+                throw evaluation_exception(
+                    "cannot connect to Ruby host process.",
+                    context.name(),
+                    context.context().backtrace()
+                );
+            }
+            throw evaluation_exception(
+                (boost::format("failed to invoke Puppet function: RPC error code %1%.") %
+                 status.error_code()
+                ).str(),
+                context.name(),
+                context.context().backtrace()
+            );
+        }
+        if (!result) {
+            throw evaluation_exception(
+                "unexpected response from server when invoking a function.",
+                context.name(),
+                context.context().backtrace()
+            );
+        }
+        return rvalue_cast(*result);
     }
 
 }}}}  // namespace puppet::compiler::evaluation::functions

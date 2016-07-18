@@ -1,12 +1,17 @@
 #include <puppet/compiler/registry.hpp>
 #include <puppet/compiler/exceptions.hpp>
 #include <puppet/compiler/node.hpp>
+#include <puppet/compiler/evaluation/functions/call_context.hpp>
+#include <puppet/compiler/evaluation/functions.hpp>
+#include <puppet/compiler/evaluation/operators.hpp>
 #include <puppet/cast.hpp>
 #include <boost/algorithm/string.hpp>
 
 using namespace std;
 using namespace puppet::runtime;
 using namespace puppet::compiler::evaluation;
+using namespace PuppetRubyHost;
+using namespace PuppetRubyHost::Protocols;
 
 namespace puppet { namespace compiler {
 
@@ -64,6 +69,179 @@ namespace puppet { namespace compiler {
     ast::type_alias_statement const& type_alias::statement() const
     {
         return _statement;
+    }
+
+    resource_type::parameter::parameter(string name, bool namevar) :
+        _name(rvalue_cast(name)),
+        _namevar(namevar)
+    {
+    }
+
+    resource_type::parameter::parameter(DescribeTypeResponse::Type::Parameter const& parameter) :
+        _name(parameter.name()),
+        _namevar(parameter.namevar())
+    {
+        for (auto const& value : parameter.values()) {
+            _values.emplace_back(value);
+        }
+        for (auto const& regex : parameter.regexes()) {
+            _regexes.emplace_back(regex);
+        }
+    }
+
+    string const& resource_type::parameter::name() const
+    {
+        return _name;
+    }
+
+    vector<string> const& resource_type::parameter::values() const
+    {
+        return _values;
+    }
+
+    vector<runtime::values::regex> const& resource_type::parameter::regexes() const
+    {
+        return _regexes;
+    }
+
+    bool resource_type::parameter::namevar() const
+    {
+        return _namevar;
+    }
+
+    void resource_type::parameter::add_value(string value)
+    {
+        _values.emplace_back(rvalue_cast(value));
+    }
+
+    void resource_type::parameter::add_regex(runtime::values::regex regex)
+    {
+        _regexes.emplace_back(rvalue_cast(regex));
+    }
+
+    resource_type::resource_type(string name, string file, size_t line) :
+        _name(rvalue_cast(name)),
+        _file(rvalue_cast(file)),
+        _line(line)
+    {
+    }
+
+    resource_type::resource_type(DescribeTypeResponse::Type const& type) :
+        _name(type.name()),
+        _file(type.file()),
+        _line(type.line())
+    {
+        for (auto const& property : type.properties()) {
+            _properties.emplace_back(property);
+        }
+        for (auto const& parameter : type.parameters()) {
+            _parameters.emplace_back(parameter);
+        }
+    }
+
+    string const& resource_type::name() const
+    {
+        return _name;
+    }
+
+    string const& resource_type::file() const
+    {
+        return _file;
+    }
+
+    size_t resource_type::line() const
+    {
+        return _line;
+    }
+
+    vector<resource_type::parameter> const& resource_type::properties() const
+    {
+        return _properties;
+    }
+
+    vector<resource_type::parameter> const& resource_type::parameters() const
+    {
+        return _parameters;
+    }
+
+    void resource_type::add_property(resource_type::parameter p)
+    {
+        _properties.emplace_back(rvalue_cast(p));
+    }
+
+    void resource_type::add_parameter(resource_type::parameter p)
+    {
+        _parameters.emplace_back(rvalue_cast(p));
+    }
+
+    registry::registry(shared_ptr<grpc::ChannelInterface> const& channel)
+    {
+        if (channel) {
+            _type_service = Type::NewStub(channel);
+            _function_service = Protocols::Function::NewStub(channel);
+        }
+    }
+
+    void registry::register_builtins()
+    {
+        // Register the built-in functions
+        register_function(functions::alert::create_descriptor());
+        register_function(functions::assert_type::create_descriptor());
+        register_function(functions::contain::create_descriptor());
+        register_function(functions::crit::create_descriptor());
+        register_function(functions::debug::create_descriptor());
+        register_function(functions::defined::create_descriptor());
+        register_function(functions::each::create_descriptor());
+        register_function(functions::emerg::create_descriptor());
+        register_function(functions::epp::create_descriptor());
+        register_function(functions::err::create_descriptor());
+        register_function(functions::fail::create_descriptor());
+        register_function(functions::file::create_descriptor());
+        register_function(functions::filter::create_descriptor());
+        register_function(functions::include::create_descriptor());
+        register_function(functions::info::create_descriptor());
+        register_function(functions::inline_epp::create_descriptor());
+        register_function(functions::new_::create_descriptor());
+        register_function(functions::map::create_descriptor());
+        register_function(functions::notice::create_descriptor());
+        register_function(functions::realize::create_descriptor());
+        register_function(functions::reduce::create_descriptor());
+        register_function(functions::require::create_descriptor());
+        register_function(functions::reverse_each::create_descriptor());
+        register_function(functions::split::create_descriptor());
+        register_function(functions::step::create_descriptor());
+        register_function(functions::tag::create_descriptor());
+        register_function(functions::tagged::create_descriptor());
+        register_function(functions::type::create_descriptor());
+        register_function(functions::versioncmp::create_descriptor());
+        register_function(functions::warning::create_descriptor());
+        register_function(functions::with::create_descriptor());
+
+        // Register the built-in binary operators
+        register_binary_operator(operators::binary::assignment::create_descriptor());
+        register_binary_operator(operators::binary::divide::create_descriptor());
+        register_binary_operator(operators::binary::equals::create_descriptor());
+        register_binary_operator(operators::binary::greater::create_descriptor());
+        register_binary_operator(operators::binary::greater_equal::create_descriptor());
+        register_binary_operator(operators::binary::in::create_descriptor());
+        register_binary_operator(operators::binary::left_shift::create_descriptor());
+        register_binary_operator(operators::binary::less::create_descriptor());
+        register_binary_operator(operators::binary::less_equal::create_descriptor());
+        register_binary_operator(operators::binary::logical_and::create_descriptor());
+        register_binary_operator(operators::binary::logical_or::create_descriptor());
+        register_binary_operator(operators::binary::match::create_descriptor());
+        register_binary_operator(operators::binary::minus::create_descriptor());
+        register_binary_operator(operators::binary::modulo::create_descriptor());
+        register_binary_operator(operators::binary::multiply::create_descriptor());
+        register_binary_operator(operators::binary::not_equals::create_descriptor());
+        register_binary_operator(operators::binary::not_match::create_descriptor());
+        register_binary_operator(operators::binary::plus::create_descriptor());
+        register_binary_operator(operators::binary::right_shift::create_descriptor());
+
+        // Register the built-in unary operators
+        register_unary_operator(operators::unary::logical_not::create_descriptor());
+        register_unary_operator(operators::unary::negate::create_descriptor());
+        register_unary_operator(operators::unary::splat::create_descriptor());
     }
 
     klass const* registry::find_class(string const& name) const
@@ -225,14 +403,9 @@ namespace puppet { namespace compiler {
         return !_nodes.empty();
     }
 
-    void registry::register_type_alias(type_alias alias)
+    void registry::register_type_alias(string name, type_alias alias)
     {
-        _aliases.emplace(alias.statement().alias.name, rvalue_cast(alias));
-    }
-
-    type_alias* registry::find_type_alias(string const& name)
-    {
-        return const_cast<type_alias*>(static_cast<registry const*>(this)->find_type_alias(name));
+        _aliases.emplace(rvalue_cast(name), rvalue_cast(alias));
     }
 
     type_alias const* registry::find_type_alias(string const& name) const
@@ -242,6 +415,233 @@ namespace puppet { namespace compiler {
             return nullptr;
         }
         return &it->second;
+    }
+
+    void registry::register_resource_type(resource_type type)
+    {
+        string name = type.name();
+        _resource_types.emplace(rvalue_cast(name), rvalue_cast(type));
+    }
+
+    resource_type const* registry::find_resource_type(string const& name) const
+    {
+        auto it = _resource_types.find(name);
+        if (it == _resource_types.end()) {
+            return nullptr;
+        }
+        return &it->second;
+    }
+
+    void registry::normalize(string& name)
+    {
+        if (boost::starts_with(name, "::")) {
+            name = name.substr(2);
+        }
+
+        boost::to_lower(name);
+    }
+
+    resource_type const* registry::import_ruby_type(string const& environment, string const& name, ast::context const& context)
+    {
+        // Don't import if there's no service or the resource type already exists
+        if (!_type_service || _resource_types.find(name) != _resource_types.end()) {
+            return nullptr;
+        }
+
+        grpc::ClientContext client_context;
+
+        DescribeTypeRequest request;
+        request.set_environment(environment);
+        request.set_name(name);
+
+        DescribeTypeResponse response;
+        auto status = _type_service->Describe(&client_context, request, &response);
+        if (!status.ok()) {
+            if (status.error_code() == grpc::UNAVAILABLE) {
+                throw evaluation_exception{
+                    (boost::format("failed to import resource type '%1%': cannot connect to Ruby host process.") %
+                     name
+                    ).str(),
+                    context
+                };
+            }
+            auto message = status.error_message();
+            if (!message.empty()) {
+                throw evaluation_exception{
+                    (boost::format("failed to import resource type '%1%': %2% (error code %3%).") %
+                     name %
+                     message %
+                     status.error_code()
+                    ).str(),
+                    context
+                };
+            }
+            throw evaluation_exception{
+                (boost::format("failed to import resource type '%1%': RPC error code %2%.") %
+                 name %
+                 status.error_code()
+                ).str(),
+                context
+            };
+        }
+
+        if (!response.has_type() && !response.has_exception()) {
+            // Not found
+            return nullptr;
+        }
+
+        if (response.has_exception()) {
+            // Raise an evaluation exception to keep the remote backtrace
+            auto const& exception = response.exception();
+            vector<stack_frame> backtrace;
+            for (auto const& frame : exception.backtrace()) {
+                backtrace.emplace_back(frame);
+            }
+            throw evaluation_exception{
+                (boost::format("exception while importing resource type '%1%': %2%") %
+                 name %
+                 exception.message()
+                ).str(),
+                context,
+                rvalue_cast(backtrace)
+            };
+        }
+        return &_resource_types.emplace(response.type().name(), resource_type{ response.type() }).first->second;
+    }
+
+    void registry::register_function(functions::descriptor descriptor)
+    {
+        if (descriptor.name().empty()) {
+            throw runtime_error("cannot register a function with an empty name.");
+        }
+        if (!descriptor.dispatchable()) {
+            throw runtime_error("cannot register a function that is not dispatchable.");
+        }
+        string name = descriptor.name();
+        if (!_functions.emplace(rvalue_cast(name), rvalue_cast(descriptor)).second) {
+            throw runtime_error((boost::format("function '%1%' already exists in the registry.") % name).str());
+        }
+    }
+
+    functions::descriptor const* registry::find_function(std::string const& name) const
+    {
+        auto it = _functions.find(name);
+        if (it == _functions.end()) {
+            return nullptr;
+        }
+        return &it->second;
+    }
+
+    functions::descriptor const* registry::import_ruby_function(string const& environment, string const& name, ast::context const& context)
+    {
+        // Don't import if there's no service or the function already exists
+        if (!_function_service || find_function(name)) {
+            return nullptr;
+        }
+
+        grpc::ClientContext client_context;
+
+        DescribeFunctionRequest request;
+        request.set_environment(environment);
+        request.set_name(name);
+
+        DescribeFunctionResponse response;
+        auto status = _function_service->Describe(&client_context, request, &response);
+        if (!status.ok()) {
+            if (status.error_code() == grpc::UNAVAILABLE) {
+                throw evaluation_exception{
+                    (boost::format("failed to import function '%1%': cannot connect to Ruby host process.") %
+                     name
+                    ).str(),
+                    context
+                };
+            }
+            auto message = status.error_message();
+            if (!message.empty()) {
+                throw evaluation_exception{
+                    (boost::format("failed to import function '%1%': %2% (error code %3%).") %
+                     name %
+                     message %
+                     status.error_code()
+                    ).str(),
+                    context
+                };
+            }
+            throw evaluation_exception{
+                (boost::format("failed to import function '%1%': RPC error code %2%.") %
+                 name %
+                 status.error_code()
+                ).str(),
+                context
+            };
+        }
+
+        if (!response.has_function() && !response.has_exception()) {
+            // Not found
+            return nullptr;
+        }
+
+        if (response.has_exception()) {
+            // Raise an evaluation exception to keep the remote backtrace
+            auto const& exception = response.exception();
+            vector<stack_frame> backtrace;
+            for (auto const& frame : exception.backtrace()) {
+                backtrace.emplace_back(frame);
+            }
+            throw evaluation_exception{
+                (boost::format("exception while importing function '%1%': %2%") %
+                 name %
+                 exception.message()
+                ).str(),
+                context,
+                rvalue_cast(backtrace)
+            };
+        }
+        return &_functions.emplace(response.function().name(), functions::descriptor{ *_function_service, environment, response.function() }).first->second;
+    }
+
+    void registry::register_binary_operator(operators::binary::descriptor descriptor)
+    {
+        if (!descriptor.dispatchable()) {
+            throw runtime_error("cannot register a binary operator that is not dispatchable.");
+        }
+        if (find_binary_operator(descriptor.oper())) {
+            throw runtime_error((boost::format("operator '%1%' already exists in the registry.") % descriptor.oper()).str());
+        }
+        _binary_operators.emplace_back(rvalue_cast(descriptor));
+    }
+
+    operators::binary::descriptor const* registry::find_binary_operator(ast::binary_operator oper) const
+    {
+        auto it = std::find_if(_binary_operators.begin(), _binary_operators.end(), [=](auto const& descriptor) {
+            return descriptor.oper() == oper;
+        });
+        if (it == _binary_operators.end()) {
+            return nullptr;
+        }
+        return &*it;
+    }
+
+    void registry::register_unary_operator(operators::unary::descriptor descriptor)
+    {
+        if (!descriptor.dispatchable()) {
+            throw runtime_error("cannot register a unary operator that is not dispatchable.");
+        }
+        if (find_unary_operator(descriptor.oper())) {
+            throw runtime_error((boost::format("operator '%1%' already exists in the registry.") % descriptor.oper()).str());
+        }
+        _unary_operators.emplace_back(rvalue_cast(descriptor));
+    }
+
+    operators::unary::descriptor const* registry::find_unary_operator(ast::unary_operator oper) const
+    {
+        auto it = std::find_if(_unary_operators.begin(), _unary_operators.end(), [=](auto const& descriptor) {
+            return descriptor.oper() == oper;
+        });
+        if (it == _unary_operators.end()) {
+            return nullptr;
+        }
+        return &*it;
     }
 
 }}  // namespace puppet::compiler

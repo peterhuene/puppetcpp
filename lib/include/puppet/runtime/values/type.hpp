@@ -306,8 +306,8 @@ namespace puppet { namespace runtime { namespace values {
         value instantiate(value from, values::array const& arguments = values::array{}, size_t offset = 0) const;
 
         /**
-         * Finds a type in the Puppet type system.
-         * @name The name of the Puppet type (e.g. 'String').
+         * Finds a type in the Puppet type system by normalized name.
+         * @name The normalized name of the Puppet type (e.g. 'hash').
          * @return Returns the Puppet type or nullptr if the given name is not a type from the Puppet type system.
          */
         static values::type const* find(std::string const& name);

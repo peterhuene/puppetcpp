@@ -9,7 +9,7 @@ using namespace puppet::runtime;
 
 namespace puppet { namespace compiler { namespace evaluation { namespace functions {
 
-    static bool is_defined(evaluation::context& context, std::string const& argument, ast::context const& argument_context)
+    static bool is_defined(evaluation::context& context, std::string argument, ast::context const& argument_context)
     {
         // Check for variable lookup
         if (boost::starts_with(argument, "$")) {
@@ -21,22 +21,17 @@ namespace puppet { namespace compiler { namespace evaluation { namespace functio
             return context.lookup(variable, false).get();
         }
 
-        // Check for built-in type
-        if (types::resource::is_builtin(types::resource{argument}.type_name())) {
-            return true;
-        }
+        registry::normalize(argument);
 
-        // Check for "main" class (no definition)
-        if (boost::iequals(argument, "main")) {
+        // Check for "main" scope
+        if (argument == "main") {
             return context.find_scope("").get();
         }
-        // Check for "settings" class (no definition)
-        if (boost::iequals(argument, "settings")) {
+        // Check for "settings" scope
+        if (argument == "settings") {
             return context.find_scope("settings").get();
         }
-
-        // Check type name
-        return context.is_defined(argument);
+        return context.find_resource_type(argument, argument_context) || context.find_defined_type(argument) || context.find_class(argument);
     }
 
     static bool is_defined(evaluation::context& context, values::type const& argument, ast::context const& argument_context);
@@ -50,10 +45,9 @@ namespace puppet { namespace compiler { namespace evaluation { namespace functio
 
         // If no title, check for built-in or defined type
         if (argument.title().empty()) {
-            if (types::resource::is_builtin(argument.type_name())) {
-                return true;
-            }
-            return context.is_defined(argument.title(), false, true);
+            auto name = argument.type_name();
+            registry::normalize(name);
+            return context.find_resource_type(name, argument_context) || context.find_defined_type(name);
         }
 
         // Find the resource in the catalog
@@ -63,12 +57,12 @@ namespace puppet { namespace compiler { namespace evaluation { namespace functio
     static bool is_defined(evaluation::context& context, types::klass const& argument, ast::context const& argument_context)
     {
         // Ensure the type isn't simply an unqualified Class type
-        if (argument.title().empty()) {
+        if (!argument.fully_qualified()) {
             throw evaluation_exception((boost::format("expected a qualified %1%.") % types::klass::name()).str(), argument_context, context.backtrace());
         }
 
         // Check that the class is defined
-        return context.is_defined(argument.title(), true, false);
+        return context.find_class(argument.class_name());
     }
 
     static bool is_defined(evaluation::context& context, types::type const& argument, ast::context const& argument_context)
@@ -83,10 +77,10 @@ namespace puppet { namespace compiler { namespace evaluation { namespace functio
         // For class types, only check if the class is defined
         if (auto klass = boost::get<types::klass>(argument.parameter().get())) {
             // Ensure the type isn't simply an unqualified Class type
-            if (klass->title().empty()) {
+            if (!klass->fully_qualified()) {
                 throw evaluation_exception((boost::format("expected a qualified %1%.") % types::klass::name()).str(), argument_context, context.backtrace());
             }
-            return context.is_defined(klass->title(), true, false);
+            return context.find_class(klass->class_name());
         }
         throw evaluation_exception(
             (boost::format("expected %1% or %2% for type parameter but found %3%.") %

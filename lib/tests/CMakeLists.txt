@@ -3,6 +3,7 @@ include_directories(
     ${Boost_INCLUDE_DIRS}
     ${CATCH_INCLUDE_DIRS}
     ${DTL_INCLUDE_DIRS}
+    ${CMAKE_BINARY_DIR}/lib # For generated GRPC files
 )
 
 add_executable(puppet_test
@@ -26,7 +27,11 @@ add_definitions(
     -DFIXTURES_DIR="${CMAKE_CURRENT_LIST_DIR}/fixtures/"
 )
 
-target_link_libraries(puppet_test puppet ${Boost_LIBRARIES} ${ICU_LIBRARIES})
+target_link_libraries(puppet_test
+    puppet
+    ${Boost_LIBRARIES}
+    ${ICU_LIBRARIES}
+)
 
 cotire(puppet_test)
 

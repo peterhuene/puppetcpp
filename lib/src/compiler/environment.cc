@@ -1,7 +1,7 @@
 #include <puppet/compiler/environment.hpp>
 #include <puppet/compiler/parser/parser.hpp>
 #include <puppet/compiler/scanner.hpp>
-#include <puppet/compiler/evaluation/evaluator.hpp>
+#include <puppet/compiler/node.hpp>
 #include <puppet/compiler/exceptions.hpp>
 #include <puppet/logging/logger.hpp>
 #include <puppet/utility/filesystem/helpers.hpp>
@@ -12,6 +12,7 @@
 
 using namespace std;
 using namespace puppet::runtime;
+using namespace puppet::compiler::evaluation;
 using namespace puppet::utility::filesystem;
 namespace fs = boost::filesystem;
 namespace sys = boost::system;
@@ -62,7 +63,7 @@ namespace puppet { namespace compiler {
         }
     }
 
-    shared_ptr<environment> environment::create(logging::logger& logger, compiler::settings settings)
+    shared_ptr<environment> environment::create(logging::logger& logger, compiler::settings settings, shared_ptr<grpc::ChannelInterface> channel)
     {
         // Get the name from the settings
         string name = boost::lexical_cast<string>(settings.get(settings::environment, false));
@@ -102,8 +103,8 @@ namespace puppet { namespace compiler {
 
         struct make_shared_enabler : environment
         {
-            explicit make_shared_enabler(string name, string base, compiler::settings settings) :
-                environment(rvalue_cast(name), rvalue_cast(base), rvalue_cast(settings))
+            explicit make_shared_enabler(string name, string base, compiler::settings settings, shared_ptr<grpc::ChannelInterface> channel) :
+                environment(rvalue_cast(name), rvalue_cast(base), rvalue_cast(settings), rvalue_cast(channel))
             {
             }
         };
@@ -111,7 +112,12 @@ namespace puppet { namespace compiler {
         // Load the environment settings
         load_environment_settings(logger, base_directory, settings);
 
-        auto environment = make_shared<make_shared_enabler>(rvalue_cast(name), rvalue_cast(base_directory), rvalue_cast(settings));
+        auto environment = make_shared<make_shared_enabler>(
+            rvalue_cast(name),
+            rvalue_cast(base_directory),
+            rvalue_cast(settings),
+            rvalue_cast(channel)
+        );
         environment->add_modules(logger);
         return environment;
     }
@@ -126,116 +132,9 @@ namespace puppet { namespace compiler {
         return _settings;
     }
 
-    compiler::registry& environment::registry()
-    {
-        return _registry;
-    }
-
-    compiler::registry const& environment::registry() const
-    {
-        return _registry;
-    }
-
-    evaluation::dispatcher& environment::dispatcher()
-    {
-        return _dispatcher;
-    }
-
-    evaluation::dispatcher const& environment::dispatcher() const
-    {
-        return _dispatcher;
-    }
-
     deque<module> const& environment::modules() const
     {
         return _modules;
-    }
-
-    void environment::compile(evaluation::context& context, vector<string> const& manifests)
-    {
-        auto& logger = context.node().logger();
-
-        vector<shared_ptr<ast::syntax_tree>> trees;
-        auto parse = [&](string const& manifest) {
-            try {
-                trees.emplace_back(import(logger, manifest));
-            } catch (parse_exception const& ex) {
-                throw compilation_exception(ex, manifest);
-            }
-        };
-
-        // Load all the main manifests
-        if (manifests.empty()) {
-            each_file(find_type::manifest, [&](auto const& manifest) {
-                parse(manifest);
-                return true;
-            });
-        } else {
-            // Set the finder to treat the manifests base as the manifest itself
-            // This handles recursively searching for manifests if a directory
-            compiler::settings temp;
-            temp.set(settings::manifest, ".");
-
-            for (auto& manifest : manifests) {
-                compiler::finder finder{ manifest, &temp };
-                finder.each_file(find_type::manifest, [&](auto const& manifest) {
-                    parse(manifest);
-                    return true;
-                });
-            }
-        }
-
-        {
-            // Create the 'main' stack frame
-            evaluation::scoped_stack_frame frame{ context, evaluation::stack_frame{ "<class main>", context.top_scope(), false }};
-            evaluation::evaluator evaluator{ context };
-
-            // Now evaluate the parsed syntax trees
-            for (auto const& tree : trees) {
-                LOG(debug, "evaluating the syntax tree for '%1%'.", tree->path());
-                evaluator.evaluate(*tree);
-            }
-        }
-
-        // Find and evaluate a node definition
-        if (_registry.has_nodes()) {
-            auto result = _registry.find_node(context.node());
-            if (!result.first) {
-                ostringstream message;
-                message << "could not find a default node or a node with the following names: ";
-                bool first = true;
-                context.node().each_name([&](string const& name) {
-                    if (first) {
-                        first = false;
-                    } else {
-                        message << ", ";
-                    }
-                    message << name;
-                    return true;
-                });
-                 message << ".";
-                throw compiler::compilation_exception(message.str());
-            }
-
-            auto& catalog = context.catalog();
-            auto resource = catalog.add(
-                types::resource("node", result.second),
-                catalog.find(types::resource("class", "main")),
-                context.top_scope(),
-                result.first->statement());
-            if (!resource) {
-                throw evaluation_exception("failed to add node resource.", context.backtrace());
-            }
-
-            LOG(debug, "evaluating node definition for node '%1%'.", context.node().name());
-            evaluation::node_evaluator evaluator{ context, result.first->statement() };
-            evaluator.evaluate(*resource);
-        }
-    }
-
-    module* environment::find_module(string const& name)
-    {
-        return const_cast<module*>(static_cast<environment const*>(this)->find_module(name));
     }
 
     module const* environment::find_module(string const& name) const
@@ -249,7 +148,6 @@ namespace puppet { namespace compiler {
 
     void environment::each_module(function<bool(module const&)> const& callback) const
     {
-        // TODO: this function needs to be thread safe
         for (auto& module : _modules) {
             if (!callback(module)) {
                 return;
@@ -257,62 +155,196 @@ namespace puppet { namespace compiler {
         }
     }
 
-    void environment::import(logging::logger& logger, find_type type, string name)
+    void environment::register_builtins()
     {
-        boost::to_lower(name);
-        if (boost::starts_with(name, "::")) {
-            name = name.substr(2);
+        _registry.register_builtins();
+    }
+
+    vector<shared_ptr<ast::syntax_tree>> environment::import_initial_manifests(logging::logger& logger)
+    {
+        lock_guard<mutex> lock(_mutex);
+
+        if (!_initial_manifests.empty()) {
+            return _initial_manifests;
         }
+
+        each_file(find_type::manifest, [&](auto const& manifest) {
+            _initial_manifests.emplace_back(this->import(logger, manifest));
+            return true;
+        });
+        return _initial_manifests;
+    }
+
+    shared_ptr<ast::syntax_tree> environment::import_manifest(logging::logger& logger, string const& path)
+    {
+        lock_guard<mutex> lock(_mutex);
+        return import(logger, path);
+    }
+
+    shared_ptr<ast::syntax_tree> environment::import_source(logging::logger& logger, string source, string path)
+    {
+        auto tree = parser::parse_string(logger, rvalue_cast(source), rvalue_cast(path));
+
+        tree->validate();
+
+        compiler::scanner scanner{ logger, _name, _registry };
+        if (scanner.scan(*tree)) {
+            // The tree contained a definition, so treat it as part of the initial manifests for the environment
+            _initial_manifests.push_back(tree);
+        }
+        return tree;
+    }
+
+    compiler::klass const* environment::find_class(logging::logger& logger, string const& name)
+    {
+        lock_guard<mutex> lock(_mutex);
+
+        if (auto klass = _registry.find_class(name)) {
+            return klass;
+        }
+
+        LOG(debug, "attempting import of class '%1%' into environment '%2%'.", name, _name);
 
         string path;
         compiler::module const* module = nullptr;
-        auto pos = name.find("::");
-        if (pos == string::npos) {
-            // If not a manifest, the name could not be imported
-            if (type != find_type::manifest) {
-                return;
-            }
+        tie(path, module) = resolve_name(logger, name, find_type::manifest);
 
-            if (name == "environment") {
-                // Don't load manifests from the environment
-                return;
-            }
-
-            // If the name is that of a module, translate to the init.pp manifest file
-            module = find_module(name);
-            if (!module) {
-                LOG(debug, "could not load 'init.pp' for module '%1%' because the module does not exist.", name);
-                return;
-            }
-            path = module->find_by_name(type, "init");
-        } else {
-            // Split into namespace and subname
-            auto ns = name.substr(0, pos);
-            auto subname = name.substr(pos + 2);
-
-            if (ns == "environment") {
-                if (type == find_type::manifest) {
-                    // Don't load manifests from the environment
-                    return;
-                }
-                path = find_by_name(type, subname);
-            } else {
-                module = find_module(ns);
-                if (!module) {
-                    LOG(debug, "could not load a file for '%1%' because module '%2%' does not exist.", name, ns);
-                    return;
-                }
-                path = module->find_by_name(type, subname);
-            }
-        }
-
-        // Ignore files that don't exist
         if (path.empty()) {
-            return;
+            return nullptr;
         }
 
-        // Import the file, but don't parse it if it's already been imported
         import(logger, path, module);
+        return _registry.find_class(name);
+    }
+
+    compiler::defined_type const* environment::find_defined_type(logging::logger& logger, string const& name)
+    {
+        lock_guard<mutex> lock(_mutex);
+
+        if (auto type = _registry.find_defined_type(name)) {
+            return type;
+        }
+
+        LOG(debug, "attempting import of defined type '%1%' into environment '%2%'.", name, _name);
+
+        string path;
+        compiler::module const* module = nullptr;
+        tie(path, module) = resolve_name(logger, name, find_type::manifest);
+
+        if (path.empty()) {
+            return nullptr;
+        }
+
+        import(logger, path, module);
+        return _registry.find_defined_type(name);
+    }
+
+    functions::descriptor const* environment::find_function(logging::logger& logger, string const& name, ast::context const& context)
+    {
+        lock_guard<mutex> lock(_mutex);
+
+        if (auto descriptor = _registry.find_function(name)) {
+            return descriptor;
+        }
+
+        LOG(debug, "attempting import of function '%1%' into environment '%2%'.", name, _name);
+
+        string path;
+        compiler::module const* module = nullptr;
+        tie(path, module) = resolve_name(logger, name, find_type::function);
+
+        // Attempt an import of a Puppet function
+        if (!path.empty()) {
+            import(logger, path, module);
+            if (auto descriptor = _registry.find_function(name)) {
+                return descriptor;
+            }
+        }
+
+        // Attempt an import of a function implemented in ruby
+        return _registry.import_ruby_function(_name, name, context);
+    }
+
+    operators::binary::descriptor const* environment::find_binary_operator(ast::binary_operator oper) const
+    {
+        // Currently binary operators cannot be defined in Puppet
+        // Therefore, only built-ins are supported and this function does not need to be made thread safe
+        return _registry.find_binary_operator(oper);
+    }
+
+    operators::unary::descriptor const* environment::find_unary_operator(ast::unary_operator oper) const
+    {
+        // Currently binary operators cannot be defined in Puppet
+        // Therefore, only built-ins are supported and this function does not need to be made thread safe
+        return _registry.find_unary_operator(oper);
+    }
+
+    compiler::type_alias const* environment::find_type_alias(logging::logger& logger, string const& name)
+    {
+        lock_guard<mutex> lock(_mutex);
+
+        if (auto alias = _registry.find_type_alias(name)) {
+            return alias;
+        }
+
+        LOG(debug, "attempting import of type alias '%1%' into environment '%2%'.", name, _name);
+
+        string path;
+        compiler::module const* module = nullptr;
+        tie(path, module) = resolve_name(logger, name, find_type::type);
+
+        if (path.empty()) {
+            return nullptr;
+        }
+
+        import(logger, path, module);
+        return _registry.find_type_alias(name);
+    }
+
+    resource_type const* environment::find_resource_type(logging::logger& logger, string const& name, ast::context const& context)
+    {
+        lock_guard<mutex> lock(_mutex);
+
+        if (auto type = _registry.find_resource_type(name)) {
+            return type;
+        }
+
+        LOG(debug, "attempting import of resource type '%1%' into environment '%2%'.", name, _name);
+
+        // TODO: load resource type from Puppet when language supports it
+
+        // Attempt an import of a function implemented in ruby
+        return _registry.import_ruby_type(_name, name, context);
+    }
+
+    pair<node_definition const*, string> environment::find_node_definition(compiler::node const& node)
+    {
+        lock_guard<mutex> lock(_mutex);
+
+        // If there are no node definitions, then do nothing
+        if (!_registry.has_nodes()) {
+            return make_pair(nullptr, string{});
+        }
+
+        // If there's at least one definition, then we must find one for the given node
+        auto definition = _registry.find_node(node);
+        if (!definition.first) {
+            ostringstream message;
+            message << "could not find a default node definition or a node definition for the following hostnames: ";
+            bool first = true;
+            node.each_name([&](string const& name) {
+                if (first) {
+                    first = false;
+                } else {
+                    message << ", ";
+                }
+                message << name;
+                return true;
+            });
+            message << ".";
+            throw compiler::compilation_exception(message.str());
+        }
+        return definition;
     }
 
     string environment::resolve_path(logging::logger& logger, find_type type, string const& path) const
@@ -345,10 +377,11 @@ namespace puppet { namespace compiler {
         return module->find_by_path(type, subname.string());
     }
 
-    environment::environment(string name, string directory, compiler::settings settings) :
+    environment::environment(string name, string directory, compiler::settings settings, shared_ptr<grpc::ChannelInterface> channel) :
         finder(rvalue_cast(directory), &settings),
         _name(rvalue_cast(name)),
-        _settings(rvalue_cast(settings))
+        _settings(rvalue_cast(settings)),
+        _registry(channel)
     {
     }
 
@@ -428,30 +461,65 @@ namespace puppet { namespace compiler {
         }
     }
 
+    pair<string, module const*> environment::resolve_name(logging::logger& logger, string const& name, find_type type) const
+    {
+        string path;
+        compiler::module const* module = nullptr;
+        auto pos = name.find("::");
+        if (pos == string::npos) {
+            // Only manifests can be implicitly loaded by module name
+            if (type == find_type::manifest && name != "environment") {
+                module = find_module(name);
+                if (!module) {
+                    LOG(debug, "could not load 'init.pp' for module '%1%' because the module does not exist.", name);
+                } else {
+                    path = module->find_by_name(type, "init");
+                }
+            }
+        } else {
+            // Split into namespace and subname
+            auto ns = name.substr(0, pos);
+            auto subname = name.substr(pos + 2);
+
+            if (ns == "environment") {
+                // Don't resolve manifests from the environment
+                if (type != find_type::manifest) {
+                    path = find_by_name(type, subname);
+                }
+            } else {
+                module = find_module(ns);
+                if (!module) {
+                    LOG(debug, "could not load a file for '%1%' because module '%2%' does not exist.", name, ns);
+                } else {
+                    path = module->find_by_name(type, subname);
+                }
+            }
+        }
+        return make_pair(rvalue_cast(path), module);
+    }
+
     shared_ptr<ast::syntax_tree> environment::import(logging::logger& logger, string const& path, compiler::module const* module)
     {
-        // TODO: this needs to be made thread safe
         // TODO: this needs to be made transactional
 
         try {
             // Check for an already parsed AST
             auto it = _parsed.find(path);
             if (it != _parsed.end()) {
-                LOG(debug, "using cached AST for '%1%' in environment '%2%'.", path, name());
+                LOG(debug, "using cached AST for '%1%' in environment '%2%'.", path, _name);
                 return it->second;
             }
 
             // Parse the file
-            LOG(debug, "loading '%1%' into environment '%2%'.", path, name());
+            LOG(debug, "importing '%1%' into environment '%2%'.", path, _name);
             auto tree = parser::parse_file(logger, path, module);
-            LOG(debug, "parsed AST for '%1%':\n-----\n%2%\n-----", path, *tree);
             _parsed.emplace(path, tree);
 
             // Validate the AST
             tree->validate();
 
             // Scan the tree for definitions
-            compiler::scanner scanner{ _registry, _dispatcher };
+            compiler::scanner scanner{ logger, _name, _registry };
             scanner.scan(*tree);
             return tree;
         } catch (parse_exception const& ex) {

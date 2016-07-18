@@ -77,7 +77,7 @@ namespace puppet { namespace logging {
         /**
          * Constructs a logger.
          */
-        logger();
+        logger() = default;
 
         /**
          * Logs a message.
@@ -172,6 +172,18 @@ namespace puppet { namespace logging {
         void level(logging::level level);
 
         /**
+         * Gets whether or not backtraces are logged.
+         * @return True if backtraces are logged or false if not.
+         */
+        bool trace() const;
+
+        /**
+         * Sets whether or not backtraces are logged.
+         * @param trace True if backtraces should be logged or false if not.
+         */
+        void trace(bool trace);
+
+        /**
          * Resets the error and warning counts.
          */
         void reset();
@@ -203,9 +215,10 @@ namespace puppet { namespace logging {
         virtual void log_backtrace(std::vector<compiler::evaluation::stack_frame> const& backtrace) = 0;
 
      private:
-        size_t _warnings;
-        size_t _errors;
-        logging::level _level;
+        size_t _warnings = 0;
+        size_t _errors = 0;
+        logging::level _level = logging::level::notice;
+        bool _trace = false;
     };
 
     /**

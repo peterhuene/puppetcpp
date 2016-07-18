@@ -6,6 +6,18 @@ if (NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build, options are: None Debug Release RelWithDebInfo MinSizeRel." FORCE)
 endif()
 
+if (NOT PUPPET_RUBY_HOST_ROOT)
+    message(FATAL_ERROR "The PUPPET_RUBY_HOST_ROOT variable was not specified. Please set it to the root of the puppet-ruby-host (https://github.com/peterhuene/puppet-ruby-host) source directory.")
+endif()
+
+get_filename_component(PUPPET_RUBY_HOST_ROOT_ABS ${PUPPET_RUBY_HOST_ROOT} ABSOLUTE)
+if (NOT IS_DIRECTORY ${PUPPET_RUBY_HOST_ROOT_ABS}/protocols)
+    message(FATAL_ERROR "Could not locate the 'protocols' directory in puppet-ruby-host root directory '${PUPPET_RUBY_HOST_ROOT}'.")
+endif()
+
+set(PUPPET_RUBY_HOST_ROOT ${PUPPET_RUBY_HOST_ROOT_ABS})
+message(STATUS "Using ${PUPPET_RUBY_HOST_ROOT} as root of puppet-ruby-host.")
+
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 include(cotire)
 enable_testing()
@@ -38,11 +50,16 @@ find_package(Boost 1.60.0 REQUIRED COMPONENTS program_options filesystem system)
 find_package(Onigmo REQUIRED)
 find_package(Facter REQUIRED)
 find_package(YAMLCPP REQUIRED)
+find_package(GRPC REQUIRED)
 find_package(Editline)
 
 include(FeatureSummary)
-set_package_properties(ICU PROPERTIES DESCRIPTION "The International Components for Unicode (ICU) library used for Unicode support." URL "http://site.icu-project.org/")
-set_package_properties(ICU PROPERTIES TYPE REQUIRED PURPOSE "Used to provide Unicode support in the Puppet language..")
+set_package_properties(Protobuf PROPERTIES DESCRIPTION "Google's language-neutral, platform-neutral, extensible mechanism for serializing structured data" URL "https://developers.google.com/protocol-buffers/")
+set_package_properties(Protobuf PROPERTIES TYPE REQUIRED PURPOSE "Used to host Puppet resource types and functions implemented in Ruby.")
+find_package(Protobuf REQUIRED)
+
+set_package_properties(ICU PROPERTIES DESCRIPTION "The International Components for Unicode (ICU) library used for Unicode support" URL "http://site.icu-project.org/")
+set_package_properties(ICU PROPERTIES TYPE REQUIRED PURPOSE "Used to provide Unicode support in the Puppet language.")
 find_package(ICU REQUIRED COMPONENTS uc i18n)
 
 # Display a summary of the features
@@ -55,7 +72,7 @@ set(DTL_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/vendor/dtl")
 
 # Need to bump up the limit for MPL lists a little bit (default is 20)
 # This is because we stick a lot of different types in boost::variant for runtime types
-add_definitions(-DBOOST_MPL_CFG_NO_PREPROCESSED_HEADERS -DBOOST_MPL_LIMIT_LIST_SIZE=40 -DONIG_ESCAPE_UCHAR_COLLISION)
+add_definitions(-DBOOST_MPL_CFG_NO_PREPROCESSED_HEADERS -DBOOST_MPL_LIMIT_LIST_SIZE=40 -DONIG_ESCAPE_UCHAR_COLLISION -DUTIL_GTL_USE_STD_SHARED_PTR=1)
 
 add_subdirectory(exe)
 add_subdirectory(lib)

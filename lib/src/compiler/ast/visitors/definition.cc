@@ -1,4 +1,5 @@
 #include <puppet/compiler/ast/visitors/definition.hpp>
+#include <puppet/compiler/registry.hpp>
 #include <puppet/runtime/types/class.hpp>
 #include <puppet/cast.hpp>
 
@@ -99,7 +100,7 @@ namespace puppet { namespace compiler { namespace ast { namespace visitors {
             qualified += "::";
         }
         qualified += name;
-        runtime::types::klass::normalize(qualified);
+        registry::normalize(qualified);
         return qualified;
     }
 
