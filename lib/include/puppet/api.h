@@ -284,21 +284,6 @@ struct puppet_hash_element
 };
 
 /**
- * Represents an element of an iterator.
- */
-struct puppet_iterator_element
-{
-    /**
-     * The iterator element key; if the iterator is not for a hash, this will be nullptr.
-     */
-    struct puppet_value const* key;
-    /**
-     * The iterator element value.
-     */
-    struct puppet_value const* value;
-};
-
-/**
  * Represents a Puppet compiler session.
  */
 struct puppet_compiler_session;
